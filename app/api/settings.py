@@ -54,6 +54,10 @@ async def settings_page(request: Request, session=Depends(require_page_session))
             "token": services.secrets.status(),
             "backups": services.backups.list_backups()[:15],
             "logins": services.app_settings.login_history(limit=15),
+            "userbots": services.userbot_accounts.views(),
+            "userbots_available": services.userbots.available(),
+            "userbot_pending": services.userbots.pending_accounts(),
+            "default_transport": services.telegram.default_mode,
             "env": {
                 "telegram_mode": services.settings.telegram_mode,
                 "dry_run": services.dry_run,

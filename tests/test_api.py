@@ -561,3 +561,132 @@ def test_manual_publish_requires_csrf(app_client) -> None:
         json={"question_id": "Q0001", "channel_id": "CH001"},
     )
     assert response.status_code == 403
+
+
+# --- userbot accounts API --------------------------------------------------
+
+def test_userbot_endpoints_require_auth(app_client) -> None:
+    assert app_client.get("/api/userbots").status_code == 401
+
+
+def test_userbot_crud_through_api(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+
+    created = app_client.post(
+        "/api/userbots",
+        json={
+            "name": "Publisher",
+            "api_id": "1234567",
+            "api_hash": "0123456789abcdef0123456789abcdef",
+            "phone": "+966500000000",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201
+    account = created.json()
+    assert account["id"].startswith("UB")
+    # Credentials are only ever exposed masked.
+    assert account["credentials"]["api_id"] == "1234567"
+    assert "0123456789abcdef" not in account["credentials"]["api_hash_masked"]
+
+    listing = app_client.get("/api/userbots").json()
+    assert len(listing["accounts"]) == 1
+
+    updated = app_client.put(
+        f"/api/userbots/{account['id']}",
+        json={"name": "Renamed", "role": "backup"},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Renamed"
+
+    toggled = app_client.post(f"/api/userbots/{account['id']}/toggle", headers=headers)
+    assert toggled.json()["account"]["enabled"] is False
+
+    deleted = app_client.delete(f"/api/userbots/{account['id']}", headers=headers)
+    assert deleted.status_code == 200
+    assert app_client.get("/api/userbots").json()["accounts"] == []
+
+
+def test_userbot_create_validates_credentials(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    response = app_client.post(
+        "/api/userbots",
+        json={"name": "Bad", "api_id": "not-a-number", "api_hash": "x" * 32},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "api_id" in response.json()["error"]
+
+
+def test_userbot_mutation_requires_csrf(app_client) -> None:
+    _login(app_client)
+    response = app_client.post(
+        "/api/userbots",
+        json={"name": "x", "api_id": "1", "api_hash": "a" * 32},
+    )
+    assert response.status_code == 403
+
+
+def test_userbot_test_without_session_reports_error(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    account = app_client.post(
+        "/api/userbots",
+        json={"name": "No session", "api_id": "1", "api_hash": "a" * 32},
+        headers=headers,
+    ).json()
+    result = app_client.post(f"/api/userbots/{account['id']}/test", headers=headers)
+    assert result.status_code == 200
+    assert result.json()["ok"] is False
+
+
+def test_channel_accepts_userbot_transport(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    created = app_client.post(
+        "/api/channels",
+        json={
+            "name": "UB channel",
+            "chat_id": "@ub_chan",
+            "transport": "userbot",
+            "userbot_account_id": "UB001",
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201
+    assert created.json()["transport"] == "userbot"
+    assert created.json()["userbot_account_id"] == "UB001"
+
+
+def test_channel_rejects_unknown_transport(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    response = app_client.post(
+        "/api/channels",
+        json={"name": "x", "chat_id": "@x", "transport": "smoke-signal"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_settings_accept_default_transport(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    response = app_client.put(
+        "/api/settings",
+        json={"transport": {"default_mode": "userbot"}},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["transport"]["default_mode"] == "userbot"
+
+
+def test_settings_page_lists_userbot_section(app_client) -> None:
+    _login(app_client)
+    response = app_client.get("/settings")
+    assert response.status_code == 200
+    assert "userbot" in response.text
+    assert "حسابات userbot" in response.text

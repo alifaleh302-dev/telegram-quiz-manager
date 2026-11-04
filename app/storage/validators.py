@@ -90,10 +90,25 @@ def validate_channel_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError(
             "معرف القناة يجب أن يبدأ بـ @ (قناة عامة) أو يكون رقمياً (معرف داخلي)."
         )
+    transport = str(payload.get("transport") or "bot").strip().lower()
+    if transport not in ("bot", "userbot"):
+        raise ValidationError("نوع النشر يجب أن يكون bot أو userbot.")
+
+    userbot_account_id = str(payload.get("userbot_account_id") or "").strip()
+    raw_pool = payload.get("userbot_account_ids") or []
+    if isinstance(raw_pool, str):
+        raw_pool = [p for p in raw_pool.replace(",", " ").split() if p]
+    if not isinstance(raw_pool, list):
+        raise ValidationError("قائمة حسابات userbot غير صالحة.")
+    userbot_account_ids = [str(p).strip() for p in raw_pool if str(p).strip()]
+
     return {
         "name": name,
         "chat_id": chat_id,
         "enabled": bool(payload.get("enabled", True)),
+        "transport": transport,
+        "userbot_account_id": userbot_account_id,
+        "userbot_account_ids": userbot_account_ids,
         "description": _clean_text(
             payload.get("description"), "الوصف", max_length=200, required=False
         ),

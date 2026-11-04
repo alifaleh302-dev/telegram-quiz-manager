@@ -37,13 +37,22 @@ class FakeTelegramClient:
         self.member_counts: dict[str, int] = {}
         self.fetch_error: Exception | None = None
 
-    async def send_quiz(self, chat_id, question, *, explanation=True, open_period=0, anonymous=True):
+    async def send_quiz(
+        self, chat_id, question, *, explanation=True, open_period=0, anonymous=True, channel_id=""
+    ):
         if self.fail_with is not None:
             from app.telegram.telegram_client import TelegramClient
 
             return TelegramClient._classify(self.fail_with)
         self.next_message_id += 1
-        self.sent.append({"chat_id": chat_id, "question": question, "message_id": self.next_message_id})
+        self.sent.append(
+            {
+                "chat_id": chat_id,
+                "question": question,
+                "message_id": self.next_message_id,
+                "channel_id": channel_id,
+            }
+        )
         return PublishResult(
             ok=True,
             message_id=self.next_message_id,
@@ -103,8 +112,9 @@ def fake_telegram() -> FakeTelegramClient:
 def services(settings: Settings, fake_telegram: FakeTelegramClient) -> Services:
     built = build_services(settings)
     # Swap the network transport for the fake, keeping every other service real.
-    built.publishing._client = fake_telegram  # noqa: SLF001
-    built.telegram = fake_telegram  # type: ignore[assignment]
+    # Publishing goes through the transport router, so we replace the router's
+    # *bot* leg (userbot channels are faked per-test where needed).
+    built.telegram._bot = fake_telegram  # noqa: SLF001
     return built
 
 

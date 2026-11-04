@@ -18,6 +18,11 @@ class ChannelIn(BaseModel):
     chat_id: str
     enabled: bool = True
     description: str = ""
+    # Which transport publishes to this channel: "bot" (Bot API) or "userbot".
+    transport: str = "bot"
+    # Optional pin to one userbot account, plus a fallback rotation pool.
+    userbot_account_id: str = ""
+    userbot_account_ids: list[str] = []
 
 
 @router.get("/channels", response_class=HTMLResponse)
@@ -33,6 +38,8 @@ async def channels_page(request: Request, session=Depends(require_page_session))
             "channels": channels,
             "schedules": services.schedules.list_schedules(),
             "bot": await services.telegram.get_me(),
+            "userbot_accounts": services.userbot_accounts.list_accounts(),
+            "userbots_available": services.userbots.available(),
         },
         session=session,
     )
@@ -105,7 +112,7 @@ async def test_channel(
     channel = services.channels.get(channel_id)
     if channel is None:
         return {"ok": False, "error": "القناة غير موجودة."}
-    result = await services.telegram.test_channel(channel["chat_id"])
+    result = await services.telegram.test_channel(channel["chat_id"], channel_id=channel_id)
     services.audit.record(
         "channel.tested",
         actor=session.username,
@@ -120,4 +127,5 @@ async def test_channel(
         "dry_run": result.dry_run,
         "error": result.error,
         "error_code": result.error_code,
+        "transport": services.telegram.mode_for_channel(channel),
     }

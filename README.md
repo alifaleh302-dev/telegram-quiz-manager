@@ -14,11 +14,12 @@
 | لوحة التحكم | إجمالي/منشور/متبقي الأسئلة، حالة النشر، النشر القادم، آخر العمليات، رسم بياني أسبوعي |
 | بنك الأسئلة | إضافة، تعديل، حذف، نسخ، بحث، تصفية (تصنيف/حالة/صعوبة)، إجراءات جماعية، معاينة، استيراد وتصدير JSON، ونشر يدوي بالزر الأيمن على أي قناة |
 | محرر السؤال | خيارات ديناميكية (2–10)، اختيار الإجابة الصحيحة، شرح، تصنيف، صعوبة، حالة، معاينة مباشرة |
-| القنوات | إضافة/حذف، قناة افتراضية، تفعيل/تعطيل، اختبار النشر، آخر عملية ناجحة |
+| القنوات | إضافة/حذف/تعديل، قناة افتراضية، تفعيل/تعطيل، اختبار النشر، آخر عملية ناجحة، واختيار نوع النشر لكل قناة: **بوت** أو **userbot** |
 | الجدولة | يومي، عدة مرات يومياً، أيام محددة، فاصل زمني، تاريخ محدد، يدوي فقط + عدد الأسئلة في كل مرة وفارق زمني بينها، ونافذة بداية/نهاية ومنطقة زمنية |
 | سجل النشر | كل محاولة: السؤال، القناة، الوقت، الحالة، Message ID، الخطأ، عدد المحاولات + إعادة المحاولة يدوياً + نشر يدوي متكرر بالزر الأيمن |
 | الإحصائيات | تفاعل الأعضاء مع كل سؤال في كل قناة: عدد التصويتات، نسبة المشاركة، نسبة الإجابات الصحيحة، تفصيل الخيارات، ورسم للنشاط اليومي |
 | الإعدادات | إعدادات النشر، إعدادات الإحصائيات، كلمة المرور، سجل تسجيل الدخول، النسخ الاحتياطي والاستعادة والتصدير ZIP |
+| حسابات userbot | إضافة عدة حسابات مستخدم (`api_id`/`api_hash`)، تسجيل دخول بخطوتين (رمز + 2FA)، تعيين حساب افتراضي، اختبار الجلسة، وتخزين المفاتيح مشفَّرة |
 
 ---
 
@@ -67,16 +68,16 @@ app/
 │   ├── logging.py          # تسجيل موحّد إلى ملف ودوران الملفات
 │   └── security.py         # Argon2، جلسات موقّعة، CSRF، تشفير الأسرار (Fernet)
 ├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, analytics, settings, auth
-├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, secret_store, backup, audit
-├── telegram/               # العميل (send_quiz / test_channel / get_me / أعداد التصويت) ومدير البوت (polling/webhook)
+├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, secret_store, userbot, backup, audit
+├── telegram/               # ناقلات النشر: عميل البوت (Bot API)، عميل userbot (MTProto)، الموجِّه (transport)، ومدير البوت (polling/webhook)
 ├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler)
 ├── storage/                # JSON مع كتابة ذرّية وقفل ملفات + التحقق من الصحة
 ├── templates/              # واجهات Jinja2 (RTL عربية)
 └── static/                 # CSS و JavaScript
 
-data/      # questions / channels / schedules / publishing_history / poll_results / poll_answers / settings / users / secrets / audit_log
+data/      # questions / channels / schedules / publishing_history / poll_results / poll_answers / userbot_accounts / settings / users / secrets / audit_log
 logs/      # app.log
-tests/     # 144 اختباراً
+tests/     # 181 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 examples/  # questions.sample.json (نموذج استيراد)
 ```
@@ -101,7 +102,14 @@ examples/  # questions.sample.json (نموذج استيراد)
 | POST | `/api/questions/import` | استيراد JSON |
 | GET | `/api/questions/export` | تصدير JSON |
 | GET/POST | `/api/channels` | عرض/إضافة قناة |
-| POST | `/api/channels/{id}/test` | اختبار النشر |
+| POST | `/api/channels/{id}/test` | اختبار النشر (عبر نوع النشر المضبوط للقناة) |
+| GET/POST | `/api/userbots` | عرض/إضافة حساب userbot |
+| PUT/DELETE | `/api/userbots/{id}` | تعديل/حذف حساب |
+| POST | `/api/userbots/{id}/toggle` · `/default` | تفعيل-إيقاف / تعيين افتراضي |
+| POST | `/api/userbots/{id}/login/start` | إرسال رمز الدخول إلى تيليجرام |
+| POST | `/api/userbots/{id}/login/complete` | إكمال الدخول بالرمز وكلمة مرور 2FA |
+| POST | `/api/userbots/{id}/login/cancel` | إلغاء عملية دخول جارية |
+| POST | `/api/userbots/{id}/test` | اختبار الجلسة وقراءة هوية الحساب |
 | POST | `/api/channels/{id}/default` | تعيين القناة الافتراضية |
 | GET/POST | `/api/schedules` | عرض/إنشاء جدول |
 | PUT/DELETE | `/api/schedules/{id}` | تعديل/حذف جدول |
@@ -149,6 +157,43 @@ examples/  # questions.sample.json (نموذج استيراد)
 > فسيُرسل مرة أخرى، لأن الطلب بشري صريح. لكنه **لا يزال يمنع** النشر المتزامن لنفس
 > (السؤال، القناة) أثناء التنفيذ، ويتجاهل حالة الإيقاف مثل زر «نشر سؤال الآن».
 > النشر الآلي (الجدولة) يبقى محكوماً بقاعدة منع التكرار كما هو.
+
+---
+
+## 5.1 النشر عبر userbot (حساب مستخدم)
+
+بجانب بوت `@BotFather`، يدعم النظام النشر عبر **userbot**: تسجيل دخول حساب تيليجرام
+حقيقي (MTProto) عبر `api_id` و `api_hash` و جلسة مسجَّلة. هذا مفيد عندما لا يسمح
+البوت بالنشر في قناة، أو عند توزيع النشر على أكثر من حساب.
+
+### كيف أضيف حساباً؟
+
+1. من [my.telegram.org](https://my.telegram.org) ← API development tools، خذ
+   `api_id` و `api_hash`.
+2. **الإعدادات ← حسابات userbot ← حساب جديد**: أدخل الاسم و`api_id` و`api_hash`
+   ورقم الهاتف (بالصيغة الدولية).
+3. اضغط زر **تسجيل الدخول** بجانب الحساب ← «إرسال رمز الدخول» ← أدخل الرمز الذي
+   وصلك في تيليجرام (وأدخل كلمة مرور الخطوة الثانية إن كان الحساب محمياً بـ 2FA).
+4. عند النجاح تُحفظ الجلسة ويصبح الحساب **مسجَّل الدخول**. اضغط «اختبار» للتأكد.
+
+### كيف أوجّه القنوات؟
+
+- **لكل قناة** (صفحة «القنوات» ← تعديل): اختر «نوع النشر» = `userbot` ثم حدّد الحساب،
+  أو اتركه فارغاً لاستخدام الحساب الافتراضي.
+- **افتراضياً لكل القنوات الجديدة** (صفحة «الإعدادات» ← نوع النشر الافتراضي).
+
+### ضمانات وأمان
+
+- تُخزَّن `api_id` و`api_hash` والجلسة **مشفَّرة** في `data/secrets.json` بمفتاح مشتق من
+  `SECRET_KEY`، ولا تُعاد أبداً في أي استجابة (تُعرض masked فقط). ملف
+  `data/userbot_accounts.json` يحتوي على البيانات الوصفية فقط.
+- الجلسة تُمثّل صلاحية كاملة على الحساب؛ تعامل معها ككلمة مرور. تغيير `SECRET_KEY`
+  يجعلها غير قابلة للفك، فسجّل الدخول من جديد.
+- عند تعيين قناة على `userbot` دون حساب جاهز يفشل النشر بخطأ واضح في السجل بدلاً من
+  النشر بهوية البوت — تجنّباً للنشر الخاطئ.
+- مكتبة MTProto هي `kurigram` (فرع `pyrogram` النشط) وتُثبَّت من `requirements.txt`.
+  إن لم تكن مثبّتة، تظهر رسالة تحذير في صفحة الإعدادات وتُرفض عمليات userbot بوضوح.
+- جمع نتائج الاستطلاعات عبر userbot **لا يُغلق الاستطلاع** (قراءة فقط)، بخلاف البوت.
 
 ---
 

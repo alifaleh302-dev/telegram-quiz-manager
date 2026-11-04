@@ -21,6 +21,9 @@ DATA_FILES = (
     "users.json",
     "secrets.json",
     "audit_log.json",
+    "poll_results.json",
+    "poll_answers.json",
+    "userbot_accounts.json",
 )
 
 

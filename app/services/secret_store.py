@@ -37,6 +37,25 @@ def validate_bot_token(token: str) -> str:
     return token
 
 
+def validate_api_id(api_id: str | int) -> int:
+    """A Telegram ``api_id`` is the numeric id from my.telegram.org."""
+    text = str(api_id or "").strip()
+    if not text.isdigit():
+        raise ValidationError("api_id يجب أن يكون رقماً (من my.telegram.org).")
+    value = int(text)
+    if value <= 0:
+        raise ValidationError("api_id غير صالح.")
+    return value
+
+
+def validate_api_hash(api_hash: str) -> str:
+    """``api_hash`` is a 32-character hexadecimal string."""
+    text = (api_hash or "").strip()
+    if len(text) != 32 or not all(c in "0123456789abcdefABCDEF" for c in text):
+        raise ValidationError("api_hash يجب أن يكون 32 حرفاً ست عشرياً.")
+    return text.lower()
+
+
 class SecretStore:
     """Reads and writes encrypted secrets, falling back to the environment."""
 
@@ -122,3 +141,123 @@ class SecretStore:
             message="حذف توكن البوت المخزّن؛ سيُستخدم توكن ملف .env إن وُجد.",
         )
         return self.status()
+
+    # --- userbot credentials (api_id / api_hash / session) -----------------
+    # Each userbot account keeps its own encrypted credentials, keyed by the
+    # account id. The document shape is
+    #   {"userbot": {"<account_id>": {"api_id": <cipher>, "api_hash": <cipher>,
+    #                                 "session": <cipher>, "updated_at": iso}}}
+    # so nothing here is ever written in clear text.
+
+    def _userbot_bucket(self) -> dict[str, Any]:
+        return self._storage.secrets.read().get("userbot") or {}
+
+    def _decrypt(self, value: str | None) -> str:
+        if not value:
+            return ""
+        try:
+            return decrypt_secret(value)
+        except SecretDecryptionError:
+            self._audit.record(
+                "secret.decrypt_failed",
+                level="error",
+                message=(
+                    "تعذّر فك تشفير بيانات حساب userbot (تغيّرت SECRET_KEY؟). "
+                    "أعد إدخال المفاتيح من الإعدادات."
+                ),
+            )
+            return ""
+
+    def save_userbot_credentials(
+        self,
+        account_id: str,
+        *,
+        api_id: int | str,
+        api_hash: str,
+        session: str = "",
+        actor: str = "system",
+    ) -> None:
+        """Store (or update) the encrypted credentials of one userbot account."""
+        normalized_id = str(validate_api_id(api_id))
+        normalized_hash = validate_api_hash(api_hash)
+        now = utc_now_iso()
+
+        def _mutate(document: dict[str, Any]) -> None:
+            bucket = document.setdefault("userbot", {})
+            entry = bucket.setdefault(account_id, {})
+            entry["api_id"] = encrypt_secret(normalized_id)
+            entry["api_hash"] = encrypt_secret(normalized_hash)
+            if session:
+                entry["session"] = encrypt_secret(session)
+            entry["updated_at"] = now
+
+        self._storage.secrets.update(_mutate)
+        self._audit.record(
+            "secret.userbot_saved",
+            actor=actor,
+            level="warning",
+            message=f"حفظ مفاتيح حساب userbot {account_id}",
+        )
+
+    def save_userbot_session(
+        self, account_id: str, session: str, *, actor: str = "system"
+    ) -> None:
+        """Persist only the session string (used after a successful login)."""
+        session = (session or "").strip()
+        if not session:
+            raise ValidationError("نص الجلسة فارغ.")
+
+        def _mutate(document: dict[str, Any]) -> None:
+            bucket = document.setdefault("userbot", {})
+            entry = bucket.setdefault(account_id, {})
+            entry["session"] = encrypt_secret(session)
+            entry["updated_at"] = utc_now_iso()
+
+        self._storage.secrets.update(_mutate)
+        self._audit.record(
+            "secret.userbot_session",
+            actor=actor,
+            level="warning",
+            message=f"حفظ جلسة حساب userbot {account_id}",
+        )
+
+    def userbot_credentials(self, account_id: str) -> dict[str, Any]:
+        """Decrypted credentials for one account (empty strings when missing)."""
+        entry = self._userbot_bucket().get(account_id) or {}
+        api_id_text = self._decrypt(entry.get("api_id"))
+        return {
+            "api_id": int(api_id_text) if api_id_text.isdigit() else None,
+            "api_hash": self._decrypt(entry.get("api_hash")),
+            "session": self._decrypt(entry.get("session")),
+            "updated_at": entry.get("updated_at"),
+        }
+
+    def userbot_has_session(self, account_id: str) -> bool:
+        return bool((self._userbot_bucket().get(account_id) or {}).get("session"))
+
+    def userbot_status(self, account_id: str) -> dict[str, Any]:
+        """Masked view for the dashboard: never exposes the raw secrets."""
+        entry = self._userbot_bucket().get(account_id) or {}
+        api_id_text = self._decrypt(entry.get("api_id"))
+        return {
+            "configured": bool(entry.get("api_id") and entry.get("api_hash")),
+            "has_session": bool(entry.get("session")),
+            "api_id": api_id_text,
+            "api_hash_masked": mask_secret(self._decrypt(entry.get("api_hash"))),
+            "session_masked": mask_secret(self._decrypt(entry.get("session"))),
+            "updated_at": entry.get("updated_at"),
+        }
+
+    def clear_userbot_credentials(self, account_id: str, *, actor: str = "system") -> None:
+        def _mutate(document: dict[str, Any]) -> None:
+            bucket = document.get("userbot") or {}
+            bucket.pop(account_id, None)
+            document["userbot"] = bucket
+
+        self._storage.secrets.update(_mutate)
+        self._audit.record(
+            "secret.userbot_cleared",
+            actor=actor,
+            level="warning",
+            message=f"حذف مفاتيح حساب userbot {account_id}",
+        )

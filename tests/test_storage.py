@@ -81,7 +81,7 @@ def test_storage_exposes_all_collections(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "data", tmp_path / "data" / "backups")
     assert set(storage.all_stores()) == {
         "questions", "channels", "schedules", "history", "settings", "users",
-        "secrets", "audit_log", "poll_results", "poll_answers",
+        "secrets", "audit_log", "poll_results", "poll_answers", "userbot_accounts",
     }
 
 

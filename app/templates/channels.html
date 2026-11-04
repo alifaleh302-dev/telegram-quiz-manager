@@ -28,6 +28,7 @@
     {% endif %}
     <p class="hint mt-2 mb-0">
       يجب أن يكون البوت مشرفاً في القناة مع صلاحية «نشر الرسائل» و«إدارة الاستطلاعات».
+      أو استخدم حساب <strong>userbot</strong> مسجَّل الدخول من الإعدادات للنشر كحساب مستخدم.
     </p>
   </div>
 </div>
@@ -40,16 +41,30 @@
       <table class="table table-hover align-middle">
         <thead>
           <tr>
-            <th>المعرف</th><th>الاسم</th><th>Chat ID</th><th>الحالة</th>
+            <th>المعرف</th><th>الاسم</th><th>Chat ID</th><th>نوع النشر</th><th>الحالة</th>
             <th>آخر نشر</th><th class="text-end">إجراءات</th>
           </tr>
         </thead>
         <tbody>
           {% for channel in channels %}
-          <tr>
+          <tr data-channel="{{ channel.id }}" data-name="{{ channel.name }}"
+              data-chat-id="{{ channel.chat_id }}" data-description="{{ channel.description or '' }}"
+              data-transport="{{ channel.transport or 'bot' }}"
+              data-userbot-account="{{ channel.userbot_account_id or '' }}">
             <td><code>{{ channel.id }}</code>{% if channel.default %} <span class="badge text-bg-primary">افتراضية</span>{% endif %}</td>
             <td>{{ channel.name }}</td>
             <td><code>{{ channel.chat_id }}</code></td>
+            <td>
+              {% if (channel.transport or 'bot') == 'userbot' %}
+                <span class="badge text-bg-info">userbot</span>
+                {% set account = userbot_accounts | selectattr('id', 'equalto', channel.userbot_account_id) | list %}
+                <div class="hint">
+                  {{ ('حساب: ' + account[0].name) if account else ('حساب: ' + (channel.userbot_account_id or 'الافتراضي')) }}
+                </div>
+              {% else %}
+                <span class="badge text-bg-secondary">بوت</span>
+              {% endif %}
+            </td>
             <td>
               <span class="badge {{ 'text-bg-success' if channel.enabled else 'text-bg-secondary' }}">
                 {{ 'مفعّلة' if channel.enabled else 'معطّلة' }}
@@ -67,6 +82,9 @@
               <div class="btn-group btn-group-sm">
                 <button class="btn btn-outline-info" onclick="TQM.testChannel('{{ channel.id }}')" title="اختبار">
                   <i class="bi bi-send-check"></i>
+                </button>
+                <button class="btn btn-outline-light" onclick="TQM.showChannelForm('{{ channel.id }}')" title="تعديل">
+                  <i class="bi bi-pencil"></i>
                 </button>
                 <button class="btn btn-outline-light" onclick="TQM.toggleChannel('{{ channel.id }}')"
                         title="{{ 'تعطيل' if channel.enabled else 'تفعيل' }}">
@@ -97,7 +115,7 @@
 </div>
 
 <div class="panel" id="channelFormPanel" hidden>
-  <div class="panel-header"><h2><i class="bi bi-plus-circle"></i> إضافة قناة</h2></div>
+  <div class="panel-header"><h2 id="channelFormTitle"><i class="bi bi-plus-circle"></i> إضافة قناة</h2></div>
   <div class="panel-body">
     <form id="channelForm" class="row g-3">
       <div class="col-md-4">
@@ -111,6 +129,25 @@
       <div class="col-md-4">
         <label class="form-label">وصف <span class="hint">(اختياري)</span></label>
         <input class="form-control" name="description" maxlength="200">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">نوع النشر</label>
+        <select class="form-select" name="transport" id="channelTransport">
+          <option value="bot">بوت (Bot API)</option>
+          <option value="userbot">userbot (حساب مستخدم)</option>
+        </select>
+      </div>
+      <div class="col-md-8" id="channelUserbotWrap" hidden>
+        <label class="form-label">حساب userbot <span class="hint">(اتركه فارغاً لاستخدام الافتراضي)</span></label>
+        <select class="form-select" name="userbot_account_id">
+          <option value="">— الافتراضي —</option>
+          {% for account in userbot_accounts %}
+          <option value="{{ account.id }}">{{ account.name }} ({{ account.id }})</option>
+          {% endfor %}
+        </select>
+        {% if not userbot_accounts %}
+        <div class="hint text-warning">لا توجد حسابات userbot بعد — أضف حساباً من صفحة الإعدادات.</div>
+        {% endif %}
       </div>
       <div class="col-12 d-flex gap-2">
         <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>

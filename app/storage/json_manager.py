@@ -235,6 +235,10 @@ class Storage:
                 "retry": {"max_attempts": 3, "delay_seconds": 60},
                 "daily_limit": 0,
                 "analytics": {"auto_collect": False, "auto_collect_hours": 6},
+                # Which transport new channels use by default: "bot" (Bot API)
+                # or "userbot" (a logged-in user account). Per-channel setting
+                # wins; this is only the fallback for channels without one.
+                "transport": {"default_mode": "bot"},
                 "paused_schedules": [],
                 "state": {},
             },
@@ -247,7 +251,13 @@ class Storage:
         )
         self.secrets = JsonStore(
             self.data_dir / "secrets.json",
-            {"version": 1, "telegram_bot_token": None, "telegram_bot_token_updated_at": None},
+            {
+                "version": 1,
+                "telegram_bot_token": None,
+                "telegram_bot_token_updated_at": None,
+                # Encrypted per-account userbot credentials, keyed by account id.
+                "userbot": {},
+            },
             backup_dir=self.backup_dir,
         )
         self.audit = JsonStore(
@@ -268,6 +278,13 @@ class Storage:
             {"version": 1, "counter": 0, "answers": []},
             backup_dir=self.backup_dir,
         )
+        # Userbot accounts: metadata only (api_id/api_hash/session are encrypted
+        # in ``secrets.json``, never in this file).
+        self.userbot_accounts = JsonStore(
+            self.data_dir / "userbot_accounts.json",
+            {"version": 1, "counter": 0, "accounts": []},
+            backup_dir=self.backup_dir,
+        )
 
     def all_stores(self) -> dict[str, JsonStore]:
         return {
@@ -281,4 +298,5 @@ class Storage:
             "audit_log": self.audit,
             "poll_results": self.poll_results,
             "poll_answers": self.poll_answers,
+            "userbot_accounts": self.userbot_accounts,
         }

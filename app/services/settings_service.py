@@ -18,6 +18,7 @@ _EDITABLE_KEYS = {
     "retry",
     "daily_limit",
     "analytics",
+    "transport",
 }
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -58,6 +59,11 @@ class SettingsService:
                         "auto_collect": bool(value.get("auto_collect", False)),
                         "auto_collect_hours": max(1, int(value.get("auto_collect_hours", 6))),
                     }
+                elif key == "transport":
+                    mode = str(value.get("default_mode", "bot")).strip().lower()
+                    if mode not in ("bot", "userbot"):
+                        raise ValidationError("نوع النشر الافتراضي يجب أن يكون bot أو userbot.")
+                    document["transport"] = {"default_mode": mode}
                 else:
                     document[key] = value
             return document

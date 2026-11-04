@@ -310,15 +310,35 @@ const TQM = (() => {
   }
 
   // ---------- Channels ----------
+  function syncChannelTransport() {
+    const select = document.getElementById('channelTransport');
+    const wrap = document.getElementById('channelUserbotWrap');
+    if (!select || !wrap) return;
+    wrap.hidden = select.value !== 'userbot';
+  }
+
   function initChannelForm() {
     const form = document.getElementById('channelForm');
     if (!form) return;
+    const transport = document.getElementById('channelTransport');
+    transport?.addEventListener('change', syncChannelTransport);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const data = Object.fromEntries(new FormData(form).entries());
-      const result = await api('/api/channels', { method: 'POST', body: { ...data, enabled: true } });
+      const payload = {
+        name: data.name,
+        chat_id: data.chat_id,
+        description: data.description || '',
+        transport: data.transport || 'bot',
+        userbot_account_id: data.transport === 'userbot' ? (data.userbot_account_id || '') : '',
+        enabled: true,
+      };
+      const editing = form.dataset.id || '';
+      const result = editing
+        ? await api(`/api/channels/${editing}`, { method: 'PUT', body: payload })
+        : await api('/api/channels', { method: 'POST', body: payload });
       if (result.ok) {
-        toast(`تمت إضافة القناة ${result.data.name}`);
+        toast(editing ? 'تم تحديث القناة' : `تمت إضافة القناة ${result.data.name}`);
         setTimeout(() => window.location.reload(), 700);
       } else {
         toast(result.error, 'error');
@@ -326,9 +346,31 @@ const TQM = (() => {
     });
   }
 
-  const showChannelForm = () => {
+  const showChannelForm = (id) => {
     const panel = document.getElementById('channelFormPanel');
-    if (panel) { panel.hidden = false; panel.scrollIntoView({ behavior: 'smooth' }); }
+    const form = document.getElementById('channelForm');
+    if (!panel || !form) return;
+    form.reset();
+    form.dataset.id = id || '';
+    const title = document.getElementById('channelFormTitle');
+    if (title) {
+      title.innerHTML = id
+        ? '<i class="bi bi-pencil"></i> تعديل قناة'
+        : '<i class="bi bi-plus-circle"></i> إضافة قناة';
+    }
+    if (id) {
+      const source = document.querySelector(`[data-channel='${id}']`);
+      if (source) {
+        form.name.value = source.dataset.name || '';
+        form.chat_id.value = source.dataset.chatId || '';
+        form.description.value = source.dataset.description || '';
+        form.transport.value = source.dataset.transport || 'bot';
+        form.userbot_account_id.value = source.dataset.userbotAccount || '';
+      }
+    }
+    syncChannelTransport();
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth' });
   };
   const hideChannelForm = () => {
     const panel = document.getElementById('channelFormPanel');
@@ -560,6 +602,144 @@ const TQM = (() => {
     });
   }
 
+  // ---------- Userbot accounts ----------
+  function userbotForm() {
+    const form = document.getElementById('userbotForm');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(form).entries());
+      const editing = form.dataset.id || '';
+      const payload = {
+        name: data.name,
+        api_id: (data.api_id || '').trim(),
+        api_hash: (data.api_hash || '').trim(),
+        phone: (data.phone || '').trim(),
+        role: data.role || 'primary',
+      };
+      const result = editing
+        ? await api(`/api/userbots/${editing}`, { method: 'PUT', body: payload })
+        : await api('/api/userbots', { method: 'POST', body: payload });
+      if (result.ok) {
+        toast(editing ? 'تم تحديث الحساب' : 'تمت إضافة الحساب');
+        setTimeout(() => window.location.reload(), 700);
+      } else {
+        toast(result.error, 'error');
+      }
+    });
+  }
+
+  const showUserbotForm = (id) => {
+    const panel = document.getElementById('userbotFormPanel');
+    const form = document.getElementById('userbotForm');
+    if (!panel || !form) return;
+    form.reset();
+    form.dataset.id = id || '';
+    const title = document.getElementById('userbotFormTitle');
+    if (title) title.textContent = id ? 'تعديل حساب userbot' : 'إضافة حساب userbot';
+    if (id) {
+      const source = document.querySelector(`[data-userbot='${id}']`);
+      if (source) {
+        form.name.value = source.dataset.name || '';
+        form.phone.value = source.dataset.phone || '';
+        form.role.value = source.dataset.role || 'primary';
+        form.api_id.value = source.dataset.apiId || '';
+      }
+    }
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth' });
+  };
+  const hideUserbotForm = () => {
+    const panel = document.getElementById('userbotFormPanel');
+    if (panel) panel.hidden = true;
+  };
+
+  const toggleUserbot = (id) => quickAction(`/api/userbots/${id}/toggle`, 'تغيير حالة الحساب');
+  const setDefaultUserbot = (id) => quickAction(`/api/userbots/${id}/default`, 'تعيين الحساب الافتراضي');
+
+  async function deleteUserbot(id) {
+    if (!confirm('حذف هذا الحساب ومفاتيحه المشفّرة؟')) return;
+    const result = await api(`/api/userbots/${id}`, { method: 'DELETE' });
+    if (result.ok) { toast('تم حذف الحساب', 'warning'); setTimeout(() => window.location.reload(), 600); }
+    else toast(result.error, 'error');
+  }
+
+  function userbotLoginBox(accountId) {
+    let box = document.getElementById('userbotLoginBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'userbotLoginBox';
+      box.className = 'panel';
+      document.getElementById('userbotFormPanel')?.after(box);
+    }
+    box.innerHTML = `
+      <div class="panel-header"><h2><i class="bi bi-box-arrow-in-right"></i> تسجيل دخول ${accountId}</h2></div>
+      <div class="panel-body">
+        <div class="mb-3">
+          <label class="form-label">رقم الهاتف (بالصيغة الدولية)</label>
+          <input class="form-control" id="ubLoginPhone" dir="ltr" placeholder="+9665xxxxxxx">
+        </div>
+        <button class="btn btn-primary btn-sm" id="ubSendCode">
+          <i class="bi bi-send"></i> إرسال رمز الدخول
+        </button>
+        <div id="ubCodeBlock" hidden class="mt-3">
+          <label class="form-label">رمز الدخول</label>
+          <input class="form-control" id="ubLoginCode" dir="ltr" placeholder="12345">
+          <label class="form-label mt-2">كلمة مرور الخطوة الثانية (2FA) <span class="hint">إن وُجدت</span></label>
+          <input class="form-control" type="password" id="ubLoginPassword" dir="ltr">
+          <button class="btn btn-success btn-sm mt-2" id="ubComplete">
+            <i class="bi bi-check2-circle"></i> تأكيد الدخول
+          </button>
+        </div>
+        <div id="ubLoginResult" class="mt-3"></div>
+      </div>`;
+    box.scrollIntoView({ behavior: 'smooth' });
+
+    const report = (ok, html) => {
+      const result = document.getElementById('ubLoginResult');
+      result.innerHTML = `<div class="alert alert-${ok ? 'success' : 'danger'} small py-2 mb-0">${html}</div>`;
+    };
+
+    document.getElementById('ubSendCode').addEventListener('click', async () => {
+      const phone = document.getElementById('ubLoginPhone').value.trim();
+      const response = await api(`/api/userbots/${accountId}/login/start`, {
+        method: 'POST', body: { phone },
+      });
+      if (response.ok) {
+        report(true, 'تم إرسال الرمز إلى حسابك في تيليجرام. أدخل الرمز بالأسفل.');
+        document.getElementById('ubCodeBlock').hidden = false;
+      } else {
+        report(false, response.error);
+      }
+    });
+
+    document.getElementById('ubComplete').addEventListener('click', async () => {
+      const code = document.getElementById('ubLoginCode').value.trim();
+      const password = document.getElementById('ubLoginPassword').value;
+      const response = await api(`/api/userbots/${accountId}/login/complete`, {
+        method: 'POST', body: { code, password },
+      });
+      if (!response.ok) { report(false, response.error); return; }
+      if (response.data.step === 'password') {
+        report(true, response.data.message);
+        document.getElementById('ubLoginPassword').focus();
+        return;
+      }
+      report(true, 'تم تسجيل الدخول وحفظ الجلسة بنجاح.');
+      toast('تم تسجيل دخول الحساب');
+      setTimeout(() => window.location.reload(), 1200);
+    });
+  }
+
+  async function testUserbot(id) {
+    const result = await api(`/api/userbots/${id}/test`, { method: 'POST' });
+    if (result.ok && result.data.ok) {
+      toast(`الحساب متصل — @${result.data.account.username || result.data.account.id}`);
+    } else {
+      toast(result.data?.error || result.error || 'فشل اختبار الحساب', 'error');
+    }
+  }
+
   // ---------- Settings ----------
   function revealToken(button) {
     const input = document.querySelector('#tokenForm input[name="token"]');
@@ -621,6 +801,7 @@ const TQM = (() => {
 
   function initSettingsForms() {
     initTokenForm();
+    userbotForm();
     const settingsForm = document.getElementById('settingsForm');
     settingsForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -642,6 +823,9 @@ const TQM = (() => {
         analytics: {
           auto_collect: form.get('analytics_auto_collect') === 'on',
           auto_collect_hours: Number(form.get('analytics_auto_collect_hours') || 6),
+        },
+        transport: {
+          default_mode: form.get('default_transport') || 'bot',
         },
       };
       const result = await api('/api/settings', { method: 'PUT', body: payload });
@@ -775,5 +959,7 @@ const TQM = (() => {
     initScheduleForm, showScheduleForm, hideScheduleForm, scheduleAction,
     retryPublish, initSettingsForms, restoreBackup, revealToken,
     collectAnalytics, showPollDetail, initManualPublish,
+    userbotForm, showUserbotForm, hideUserbotForm, toggleUserbot, setDefaultUserbot,
+    deleteUserbot, userbotLoginBox, testUserbot,
   };
 })();

@@ -16,9 +16,12 @@ from app.services.question_service import QuestionService
 from app.services.schedule_service import ScheduleService
 from app.services.secret_store import SecretStore
 from app.services.settings_service import SettingsService
+from app.services.userbot_service import UserbotAccountService
 from app.storage.json_manager import Storage
 from app.telegram.bot import BotManager
 from app.telegram.telegram_client import TelegramClient
+from app.telegram.transport import TransportRouter
+from app.telegram.userbot_manager import UserbotManager
 
 
 @dataclass
@@ -35,9 +38,13 @@ class Services:
     backups: BackupService
     runner: ScheduleRunner
     engine: SchedulerEngine
-    telegram: TelegramClient
+    # ``telegram`` is the transport router: it exposes the same interface as the
+    # old bot client and dispatches per channel (bot vs userbot).
+    telegram: TransportRouter
     bot: BotManager
     secrets: SecretStore
+    userbots: UserbotManager
+    userbot_accounts: UserbotAccountService
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -48,8 +55,10 @@ class Services:
 
     @property
     def dry_run(self) -> bool:
-        """True when no usable bot token is configured (from env or the dashboard)."""
-        return not self.secrets.bot_token()
+        """True when neither the Bot API nor a userbot account can publish."""
+        if self.secrets.bot_token():
+            return False
+        return not self.userbot_accounts.usable_accounts()
 
 
 def build_services(settings: Settings) -> Services:
@@ -62,9 +71,14 @@ def build_services(settings: Settings) -> Services:
     schedules = ScheduleService(storage, audit, channels)
     app_settings = SettingsService(storage, audit)
     secrets = SecretStore(storage, audit)
-    telegram = TelegramClient(secret_store=secrets)
+    userbot_accounts = UserbotAccountService(storage, audit, secrets)
+    bot_client = TelegramClient(secret_store=secrets)
+    userbots = UserbotManager(
+        userbot_accounts, secrets, audit, timeout=settings.telegram_timeout
+    )
+    transport = TransportRouter(bot_client, userbots, channels, app_settings)
     publishing = PublishingService(
-        storage, audit, questions, channels, app_settings, telegram
+        storage, audit, questions, channels, app_settings, transport
     )
     analytics = AnalyticsService(storage, audit, questions, channels)
     backups = BackupService(storage, audit)
@@ -76,7 +90,7 @@ def build_services(settings: Settings) -> Services:
         settings=app_settings,
         audit=audit,
     )
-    engine = SchedulerEngine(runner, schedules, analytics, app_settings, telegram)
+    engine = SchedulerEngine(runner, schedules, analytics, app_settings, transport)
     bot = BotManager(
         {
             "questions": questions,
@@ -102,7 +116,9 @@ def build_services(settings: Settings) -> Services:
         backups=backups,
         runner=runner,
         engine=engine,
-        telegram=telegram,
+        telegram=transport,
         bot=bot,
         secrets=secrets,
+        userbots=userbots,
+        userbot_accounts=userbot_accounts,
     )

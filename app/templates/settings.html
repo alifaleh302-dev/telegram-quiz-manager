@@ -139,9 +139,167 @@
           <input class="form-control" type="number" name="analytics_auto_collect_hours" min="1"
                  value="{{ (config.analytics.auto_collect_hours if config.analytics else 6) or 6 }}">
         </div>
+        <hr class="my-4">
+        <h3 class="h6"><i class="bi bi-broadcast-pin"></i> نوع النشر الافتراضي</h3>
+        <div class="mb-3">
+          <label class="form-label">الطريقة الافتراضية للنشر</label>
+          <select class="form-select" name="default_transport">
+            <option value="bot" {{ 'selected' if (config.transport and config.transport.default_mode) != 'userbot' }}>
+              بوت (Bot API) — عبر توكن @BotFather
+            </option>
+            <option value="userbot" {{ 'selected' if config.transport and config.transport.default_mode == 'userbot' }}>
+              userbot (حساب مستخدم) — عبر api_id/api_hash
+            </option>
+          </select>
+          <div class="hint">
+            يُستخدم هذا الوضع للقنوات التي لم يُحدَّد لها نوع نشر صريح. يمكن ضبط نوع
+            مختلف لكل قناة من صفحة «القنوات».
+          </div>
+        </div>
         <button class="btn btn-primary mt-3" type="submit"><i class="bi bi-save"></i> حفظ الإعدادات</button>
       </form>
     </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header">
+    <h2><i class="bi bi-person-badge"></i> حسابات userbot</h2>
+    <button class="btn btn-sm btn-primary" onclick="TQM.showUserbotForm()">
+      <i class="bi bi-plus-lg"></i> حساب جديد
+    </button>
+  </div>
+  <div class="panel-body">
+    {% if not userbots_available %}
+    <div class="alert alert-warning small">
+      <i class="bi bi-exclamation-triangle"></i>
+      مكتبة Pyrogram غير مثبّتة على السيرفر؛ لن تعمل حسابات userbot.
+      ثبّت الحزمة <code>kurigram</code> ثم أعد تشغيل الخدمة.
+    </div>
+    {% endif %}
+    <p class="hint">
+      <i class="bi bi-info-circle"></i>
+      يسمح userbot بالنشر كحساب مستخدم حقيقي (عبر <code>api_id</code> و
+      <code>api_hash</code> و جلسة مسجَّلة) بدلاً من بوت. تُخزَّن المفاتيح
+      والجلسة مشفَّرة في <code>data/secrets.json</code> ولا تُعرض أبداً بعد الحفظ.
+      احصل على المفاتيح من <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>.
+    </p>
+
+    {% if userbots %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>المعرف</th><th>الاسم</th><th>الهاتف</th><th>api_id</th>
+            <th>الحالة</th><th>آخر استخدام</th><th class="text-end">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for account in userbots %}
+          <tr data-userbot="{{ account.id }}" data-name="{{ account.name }}"
+              data-phone="{{ account.phone }}" data-role="{{ account.role }}"
+              data-api-id="{{ account.credentials.api_id or '' }}">
+            <td>
+              <code>{{ account.id }}</code>
+              {% if account.default %}<span class="badge text-bg-primary">افتراضي</span>{% endif %}
+            </td>
+            <td>{{ account.name }}
+              <span class="badge text-bg-secondary">{{ 'احتياطي' if account.role == 'backup' else 'أساسي' }}</span>
+            </td>
+            <td><code dir="ltr">{{ account.phone or '—' }}</code></td>
+            <td>
+              <code dir="ltr">{{ account.credentials.api_id or '—' }}</code>
+              {% if account.credentials.api_hash_masked %}
+                <div class="hint">hash: {{ account.credentials.api_hash_masked }}</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if account.status == 'active' %}
+                <span class="badge text-bg-success">مسجَّل الدخول{% if account.username %} (@{{ account.username }}){% endif %}</span>
+              {% elif account.status == 'disabled' %}
+                <span class="badge text-bg-secondary">معطّل</span>
+              {% else %}
+                <span class="badge text-bg-warning">بانتظار الدخول</span>
+              {% endif %}
+              {% if not account.enabled %}<span class="badge text-bg-secondary">موقوف</span>{% endif %}
+              {% if account.last_error %}
+                <div class="hint text-danger">{{ account.last_error }}</div>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ account.last_used_at or '—' }}</td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-info" onclick="TQM.userbotLoginBox('{{ account.id }}')" title="تسجيل الدخول">
+                  <i class="bi bi-box-arrow-in-right"></i>
+                </button>
+                <button class="btn btn-outline-success" onclick="TQM.testUserbot('{{ account.id }}')" title="اختبار الجلسة">
+                  <i class="bi bi-plug"></i>
+                </button>
+                <button class="btn btn-outline-light" onclick="TQM.showUserbotForm('{{ account.id }}')" title="تعديل">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-outline-light" onclick="TQM.toggleUserbot('{{ account.id }}')"
+                        title="{{ 'إيقاف' if account.enabled else 'تشغيل' }}">
+                  <i class="bi {{ 'bi-toggle-on' if account.enabled else 'bi-toggle-off' }}"></i>
+                </button>
+                {% if not account.default %}
+                <button class="btn btn-outline-primary" onclick="TQM.setDefaultUserbot('{{ account.id }}')" title="تعيين افتراضي">
+                  <i class="bi bi-star"></i>
+                </button>
+                {% endif %}
+                <button class="btn btn-outline-danger" onclick="TQM.deleteUserbot('{{ account.id }}')" title="حذف">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">لا توجد حسابات userbot بعد.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel" id="userbotFormPanel" hidden>
+  <div class="panel-header"><h2 id="userbotFormTitle"><i class="bi bi-plus-circle"></i> إضافة حساب userbot</h2></div>
+  <div class="panel-body">
+    <form id="userbotForm" class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">اسم الحساب <span class="req">*</span></label>
+        <input class="form-control" name="name" required maxlength="80">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">api_id <span class="req">*</span></label>
+        <input class="form-control" name="api_id" dir="ltr" placeholder="1234567">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">api_hash <span class="req">*</span></label>
+        <input class="form-control" name="api_hash" dir="ltr" placeholder="0123456789abcdef0123456789abcdef">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">رقم الهاتف <span class="hint">(للتوثيق وتسجيل الدخول)</span></label>
+        <input class="form-control" name="phone" dir="ltr" placeholder="+9665xxxxxxx">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">النوع</label>
+        <select class="form-select" name="role">
+          <option value="primary">أساسي</option>
+          <option value="backup">احتياطي</option>
+        </select>
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        <button class="btn btn-outline-secondary" type="button" onclick="TQM.hideUserbotForm()">إلغاء</button>
+      </div>
+    </form>
+    <p class="hint mt-2">
+      عند التعديل، املأ <code>api_id</code> و<code>api_hash</code> فقط إذا أردت تغيير
+      المفاتيح؛ اتركهما فارغين للإبقاء على المفاتيح الحالية. بعد الحفظ اضغط زر
+      «تسجيل الدخول» لإدخال رمز تيليجرام وإنشاء الجلسة.
+    </p>
   </div>
 </div>
 

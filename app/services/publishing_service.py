@@ -201,6 +201,7 @@ class PublishingService:
                 explanation=bool(options.get("explanation", True)),
                 open_period=int(options.get("open_period", 0)),
                 anonymous=bool(options.get("anonymous", True)),
+                channel_id=channel_id,
             )
 
             if result.ok:
@@ -278,6 +279,7 @@ class PublishingService:
                 explanation=bool(options.get("explanation", True)),
                 open_period=int(options.get("open_period", 0)),
                 anonymous=bool(options.get("anonymous", True)),
+                channel_id=entry["channel_id"],
             )
             if result.ok:
                 final = self._finish(
