@@ -12,9 +12,15 @@ import datetime
 import pytest
 from telegram.error import Forbidden, RetryAfter
 
-from app.services.publishing_service import MAX_FLOOD_RETRIES, STATUS_FAILED, STATUS_SUCCESS
+from app.services.publishing_service import (
+    MAX_FLOOD_RETRIES,
+    STATUS_CANCELLED,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+)
 from app.telegram.telegram_client import PublishResult, retry_after_seconds
 from app.storage.validators import ValidationError
+from tests.conftest import RecordingSleeper
 
 
 @pytest.fixture
@@ -236,3 +242,85 @@ async def test_publish_many_result_shape(services, questions, channel) -> None:
 
 def test_publish_result_flood_flag_defaults_false() -> None:
     assert PublishResult(ok=True).flood_wait is False
+
+
+# --- cancelling an in-progress run -----------------------------------------
+
+
+class CancellingSleeper:
+    """A sleeper that asks the publish run to cancel on a chosen wait."""
+
+    def __init__(self, publishing, *, after: int = 1) -> None:
+        self.publishing = publishing
+        self.after = after
+        self.calls = 0
+
+    async def __call__(self, seconds: float) -> None:
+        self.calls += 1
+        if self.calls >= self.after:
+            self.publishing.request_cancel()
+
+
+async def test_bulk_publish_can_be_cancelled_between_sends(
+    services, questions, channel, fake_telegram
+) -> None:
+    services.publishing._sleep = CancellingSleeper(services.publishing, after=1)  # noqa: SLF001
+    ids = [q["id"] for q in questions]
+
+    results = await services.publishing.publish_many(ids, channel["id"])
+
+    # The first two went out (the cancel lands during the wait after the first),
+    # the rest are reported as cancelled and were never sent.
+    assert [r["status"] for r in results] == [
+        STATUS_SUCCESS,
+        STATUS_SUCCESS,
+        STATUS_CANCELLED,
+        STATUS_CANCELLED,
+    ]
+    assert len(fake_telegram.sent) == 2
+
+
+async def test_cancelled_run_records_an_audit_note(
+    services, questions, channel
+) -> None:
+    services.publishing._sleep = CancellingSleeper(services.publishing, after=1)  # noqa: SLF001
+    await services.publishing.publish_many([q["id"] for q in questions], channel["id"])
+
+    events = [e for e in services.audit.recent(50) if e["action"] == "publishing.cancelled"]
+    assert events, "a cancelled run must leave an audit trail"
+
+
+async def test_cancel_flag_clears_after_a_run(services, questions, channel) -> None:
+    services.publishing._sleep = CancellingSleeper(services.publishing, after=1)  # noqa: SLF001
+    await services.publishing.publish_many([q["id"] for q in questions], channel["id"])
+
+    assert services.publishing.cancel_requested is False
+    assert services.publishing.is_publishing is False
+    # A second, un-cancelled run is not affected by the previous click: swap in
+    # a sleeper that never cancels.
+    services.publishing._sleep = RecordingSleeper()  # noqa: SLF001
+    results = await services.publishing.publish_many(
+        [q["id"] for q in questions], channel["id"]
+    )
+    assert all(r["status"] == STATUS_SUCCESS for r in results)
+
+
+def test_request_cancel_without_an_active_run_is_a_noop(services) -> None:
+    assert services.publishing.request_cancel() is False
+
+
+async def test_progress_reports_the_active_run(services, questions, channel) -> None:
+    # No run yet: idle.
+    assert services.publishing.progress() == {
+        "running": False,
+        "cancel_requested": False,
+        "run": None,
+    }
+
+    services.publishing.begin_run(kind="bulk", channel_id=channel["id"], total=3)
+    services.publishing.note_progress(1)
+    state = services.publishing.progress()
+    assert state["running"] is True
+    assert state["run"]["done"] == 1
+    assert state["run"]["total"] == 3
+    services.publishing.end_run()

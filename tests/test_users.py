@@ -391,12 +391,13 @@ def test_bulk_publish_controls_shown_when_both_grants_held(app_client) -> None:
     assert page.status_code == 200
     assert "bulkPublishModal" in page.text
     assert "نشر المحدد" in page.text
-    # Without the schedules grant the template picker is not offered.
-    assert 'for="bpSchedule"' not in page.text
-    assert 'id="bpSchedule"' not in page.text
+    # Without the schedules grant the "create a dedicated schedule" option is not
+    # offered; only immediate publishing is available.
+    assert 'id="bpModeSchedule"' not in page.text
+    assert 'id="bpModeNow"' not in page.text
 
 
-def test_bulk_modal_offers_schedule_templates_to_schedulers(app_client) -> None:
+def test_bulk_modal_offers_dedicated_schedule_to_schedulers(app_client) -> None:
     _login(app_client)
     headers = _headers(app_client)
     channel = _make_channel(app_client, headers)
@@ -409,9 +410,10 @@ def test_bulk_modal_offers_schedule_templates_to_schedulers(app_client) -> None:
     _login(app_client, "planner", "UserPassword123!")
     page = app_client.get("/questions")
     assert page.status_code == 200
-    assert "قالب الجدولة" in page.text
-    # The template option is tagged with its channel so the UI can filter it.
-    assert f'data-channel="{channel["id"]}"' in page.text
+    # The publish window offers a fresh dedicated schedule instead of old templates.
+    assert "إنشاء جدول مخصص لهذه الدفعة" in page.text
+    assert 'id="bpModeSchedule"' in page.text
+    assert 'id="bpSchedule"' not in page.text
 
 
 def test_settings_page_hides_system_panels_from_regular_users(app_client) -> None:
@@ -800,3 +802,158 @@ def test_clear_queue_empties_the_schedule(app_client) -> None:
     assert cleared.status_code == 200
     stored = app_client.get("/api/schedules").json()["schedules"][0]
     assert stored["queue"] == []
+
+
+# --- publish window: duplicate detection + dedicated schedule --------------
+
+def test_duplicates_endpoint_reports_repeats_for_the_channel(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    question = _make_question(app_client, headers)
+
+    # Publish the question so it is a repeat for this channel.
+    published = app_client.post(
+        "/api/publishing/publish-now",
+        json={"question_id": question["id"], "channel_id": channel["id"]},
+        headers=headers,
+    )
+    assert published.status_code == 200
+
+    check = app_client.post(
+        "/api/publishing/duplicates",
+        json={"question_ids": [question["id"]], "channel_id": channel["id"]},
+        headers=headers,
+    )
+    assert check.status_code == 200
+    body = check.json()
+    assert body["count"] == 1
+    assert body["duplicates"][0]["id"] == question["id"]
+    assert body["duplicates"][0]["text"] == question["question"]
+
+    # A different channel has no repeats for the same question.
+    other = _make_channel(app_client, headers, name="Other")
+    fresh = app_client.post(
+        "/api/publishing/duplicates",
+        json={"question_ids": [question["id"]], "channel_id": other["id"]},
+        headers=headers,
+    )
+    assert fresh.json()["count"] == 0
+
+
+def test_duplicates_endpoint_requires_channel(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    response = app_client.post(
+        "/api/publishing/duplicates",
+        json={"question_ids": ["Q0001"], "channel_id": ""},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_dedicated_schedule_created_and_pinned(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    first = _make_question(app_client, headers, "first")
+    second = _make_question(app_client, headers, "second")
+
+    response = app_client.post(
+        "/api/publishing/dedicated-schedule",
+        json={
+            "channel_id": channel["id"],
+            "question_ids": [first["id"], second["id"]],
+            "interval_minutes": 45,
+            "questions_per_run": 1,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["queued"] == 2
+
+    stored = app_client.get("/api/schedules").json()["schedules"][0]
+    assert stored["id"] == body["schedule_id"]
+    assert stored["queue"] == [first["id"], second["id"]]
+    assert stored["queue_only"] is True
+    assert stored["type"] == "interval"
+    assert stored["interval_minutes"] == 45
+
+
+def test_dedicated_schedule_requires_schedules_grant(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    question = _make_question(app_client, headers)
+    _new_user(app_client, headers, "publisher", permissions=["questions", "publish"])
+
+    app_client.cookies.clear()
+    _login(app_client, "publisher", "UserPassword123!")
+    response = app_client.post(
+        "/api/publishing/dedicated-schedule",
+        json={"channel_id": channel["id"], "question_ids": [question["id"]]},
+        headers=_headers(app_client),
+    )
+    assert response.status_code == 403
+
+
+def test_questions_page_shows_published_channel_badge(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers, name="Main")
+    question = _make_question(app_client, headers)
+    app_client.post(
+        "/api/publishing/publish-now",
+        json={"question_id": question["id"], "channel_id": channel["id"]},
+        headers=headers,
+    )
+
+    page = app_client.get("/questions")
+    assert page.status_code == 200
+    # The channel the question already went out on is shown next to it.
+    assert "نُشر على Main" in page.text
+
+
+# --- cancel an in-progress publish -----------------------------------------
+
+def test_cancel_endpoint_reports_no_active_run(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    response = app_client.post("/api/publishing/cancel", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    # Nothing is publishing, so the request is a safe no-op.
+    assert body["ok"] is True
+    assert body["cancelled"] is False
+    assert body["running"] is False
+
+
+def test_progress_endpoint_is_idle_without_a_run(app_client) -> None:
+    _login(app_client)
+    response = app_client.get("/api/publishing/progress")
+    assert response.status_code == 200
+    assert response.json() == {"running": False, "cancel_requested": False, "run": None}
+
+
+def test_cancel_requires_publish_grant(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _new_user(app_client, headers, "viewer", permissions=["questions"])
+
+    app_client.cookies.clear()
+    _login(app_client, "viewer", "UserPassword123!")
+    response = app_client.post(
+        "/api/publishing/cancel", headers=_headers(app_client)
+    )
+    assert response.status_code == 403
+
+
+def test_publish_modal_offers_a_stop_button(app_client) -> None:
+    _login(app_client)
+    _make_channel(app_client, _headers(app_client))
+    page = app_client.get("/questions")
+    assert page.status_code == 200
+    assert 'id="bpCancelRun"' in page.text
+    assert "إيقاف النشر" in page.text

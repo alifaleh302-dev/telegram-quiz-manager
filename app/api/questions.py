@@ -58,31 +58,41 @@ async def questions_page(
     if isinstance(session, RedirectResponse):
         return session
     services = get_services(request)
-    questions = services.questions.list_questions(
-        search=search, category=category, status=status, difficulty=difficulty
-    )
-    pacing_interval, _ = services.publishing.pacing()
     channels = services.channels.list_channels()
     channel_names = {c["id"]: c["name"] for c in channels}
-    schedule_templates = [
-        {
-            "id": s["id"],
-            "name": s.get("name") or s["id"],
-            "channel_id": s["channel_id"],
-            "channel_name": channel_names.get(s["channel_id"], s["channel_id"]),
-            "queued": len(services.schedules.queue_of(s)),
-        }
-        for s in services.schedules.list_schedules()
-    ]
+    # Publishing state is per channel, so show which channels each question has
+    # already gone out on instead of a single global "published" flag.
+    published_pairs = services.publishing.published_pairs()
+    published_ids = {qid for (_, qid) in published_pairs}
+
+    # The "published" filter is now a view over the history (published to *some*
+    # channel), not a stored question status.
+    service_status = "" if status == "published" else status
+    questions = services.questions.list_questions(
+        search=search, category=category, status=service_status, difficulty=difficulty
+    )
+    if status == "published":
+        questions = [q for q in questions if q["id"] in published_ids]
+
+    pacing_interval, _ = services.publishing.pacing()
+    for question in questions:
+        question["published_channels"] = [
+            {
+                "id": channel["id"],
+                "name": channel_names.get(channel["id"], channel["id"]),
+            }
+            for channel in channels
+            if (channel["id"], question["id"]) in published_pairs
+        ]
+        question["is_published"] = bool(question["published_channels"])
     return render(
         request,
         "questions.html",
         {
             "questions": questions,
             "categories": services.questions.categories(),
-            "stats": services.questions.stats(),
+            "stats": {**services.questions.stats(), "published": len(published_ids)},
             "channels": channels,
-            "schedule_templates": schedule_templates,
             "pacing_interval": pacing_interval,
             "filters": {
                 "search": search,

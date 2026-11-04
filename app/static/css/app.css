@@ -370,3 +370,17 @@ tr[data-question-id] { cursor: context-menu; }
   color: var(--text-muted);
 }
 .bp-list li code { color: var(--accent); }
+
+/* Duplicate warning inside the bulk-publish modal */
+.bp-dup-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fecaca;
+}
+.bp-dup-list .form-check-input { margin: 0; flex: 0 0 auto; }
+.bp-dup-list label { cursor: pointer; }
+
+/* Per-channel published badges in the question table */
+.q-channels { display: flex; flex-wrap: wrap; gap: 4px; }
+.q-channels .badge { font-weight: 500; }

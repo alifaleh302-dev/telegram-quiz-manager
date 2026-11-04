@@ -482,3 +482,75 @@ def test_assign_questions_is_idempotent(services) -> None:
 def test_new_schedule_starts_with_an_empty_queue(services) -> None:
     schedule = _schedule(services)
     assert schedule["queue"] == []
+
+
+async def test_runner_publishes_a_question_new_to_its_channel(services, fake_telegram) -> None:
+    """A question published on another channel is still picked here."""
+    created = _make_ready(services, 2)
+    first = services.channels.create({"name": "First", "chat_id": "@first"})
+    second = services.channels.create({"name": "Second", "chat_id": "@second"})
+
+    # Publish ``created[0]`` to the first channel only.
+    await services.publishing.publish(created[0]["id"], first["id"])
+
+    schedule = _schedule(services, channel_id=second["id"])
+    result = await services.runner.run(schedule["id"])
+
+    assert result["ok"] is True
+    # The per-channel candidate is ``created[0]`` (new to the second channel),
+    # not skipped because it went out elsewhere.
+    assert fake_telegram.sent[-1]["question"]["id"] == created[0]["id"]
+
+
+async def test_queue_only_schedule_publishes_only_the_queue_then_disables(
+    services, fake_telegram
+) -> None:
+    created = _make_ready(services, 3)
+    schedule = _schedule(services, queue_only=True, questions_per_run=1)
+    services.schedules.assign_questions(schedule["id"], [created[2]["id"]])
+
+    result = await services.runner.run(schedule["id"])
+    assert result["ok"] is True
+    # Only the pinned question went out; the bank was not topped up from.
+    assert [s["question"]["id"] for s in fake_telegram.sent] == [created[2]["id"]]
+
+    # The queue drained and the dedicated schedule retired itself.
+    assert services.schedules.get(schedule["id"])["queue"] == []
+    assert services.schedules.get(schedule["id"])["enabled"] is False
+
+
+async def test_queue_only_schedule_disables_when_it_has_no_queue(services) -> None:
+    schedule = _schedule(services, queue_only=True)
+    result = await services.runner.run(schedule["id"])
+    assert result["reason"] == "queue-completed"
+    assert services.schedules.get(schedule["id"])["enabled"] is False
+
+
+async def test_scheduled_batch_can_be_cancelled(services, fake_telegram) -> None:
+    """Cancelling mid-batch stops the schedule loop after the current send."""
+    _make_ready(services, 4)
+    schedule = _schedule(services, questions_per_run=4, batch_interval_seconds=5)
+
+    # Ask for cancellation as soon as the run registers itself.
+    original_begin = services.publishing.begin_run
+
+    def begin_and_cancel(**kwargs):
+        original_begin(**kwargs)
+        services.publishing.request_cancel()
+
+    services.publishing.begin_run = begin_and_cancel  # type: ignore[assignment]
+
+    result = await services.runner.run(schedule["id"])
+
+    # The cancel is seen before the first send, so nothing goes out.
+    assert result["published"] == 0
+    assert result["cancelled"] == 4
+    assert fake_telegram.sent == []
+
+
+async def test_scheduled_batch_cancel_clears_run_state(services) -> None:
+    _make_ready(services, 2)
+    schedule = _schedule(services, questions_per_run=2)
+    await services.runner.run(schedule["id"])
+    # A normal, un-cancelled run must leave no active run behind.
+    assert services.publishing.is_publishing is False

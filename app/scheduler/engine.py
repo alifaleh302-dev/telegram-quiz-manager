@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date, datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -141,7 +142,28 @@ class SchedulerEngine:
             minutes = int(schedule.get("interval_minutes") or 0)
             if minutes <= 0:
                 return None
-            return IntervalTrigger(minutes=minutes, timezone=timezone)
+            # An optional start time anchors the first firing to the clock (e.g.
+            # start at 20:00, then every N minutes) instead of "now + N minutes".
+            start_time = str(schedule.get("start_time") or "")
+            start_date = schedule.get("start_date") or ""
+            start = None
+            if start_time:
+                try:
+                    hour, minute = (int(part) for part in start_time.split(":"))
+                except (TypeError, ValueError):
+                    hour, minute = 0, 0
+                try:
+                    day = date.fromisoformat(start_date) if start_date else None
+                except ValueError:
+                    day = None
+                now = datetime.now(timezone)
+                base = (
+                    datetime(day.year, day.month, day.day, hour, minute, tzinfo=timezone)
+                    if day
+                    else now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                )
+                start = base
+            return IntervalTrigger(minutes=minutes, start_date=start, timezone=timezone)
 
         if not times:
             return None

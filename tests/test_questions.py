@@ -165,17 +165,23 @@ def test_import_accepts_exported_option_objects(services) -> None:
     assert question["correct_option_id"] == 1
 
 
-def test_pick_candidates_only_ready_and_excludes_published(services) -> None:
+def test_pick_candidates_excludes_non_ready(services) -> None:
     services.questions.create(_payload("ready one", status="ready"))
     services.questions.create(_payload("draft one", status="draft"))
-    published = services.questions.create(_payload("already published", status="ready"))
-    services.questions._storage.questions.update(  # noqa: SLF001
-        lambda doc: [
-            q.update({"status": "published"}) for q in doc["questions"] if q["id"] == published["id"]
-        ]
-    )
     candidates = services.questions.pick_candidates()
     assert [q["question"] for q in candidates] == ["ready one"]
+
+
+def test_pick_candidates_per_channel_excludes_only_that_channel(services) -> None:
+    first = services.questions.create(_payload("first", status="ready"))
+    second = services.questions.create(_payload("second", status="ready"))
+    # ``first`` already went out on CH001, ``second`` on CH002.
+    pairs = {("CH001", first["id"]), ("CH002", second["id"])}
+    candidates = services.questions.pick_candidates(
+        channel_id="CH001", published_pairs=pairs
+    )
+    # On CH001 only ``first`` is excluded; ``second`` is still new here.
+    assert [q["id"] for q in candidates] == [second["id"]]
 
 
 def test_pick_candidates_random_returns_all(services) -> None:

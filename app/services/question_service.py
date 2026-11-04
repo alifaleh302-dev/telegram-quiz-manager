@@ -229,19 +229,32 @@ class QuestionService:
         selection: str = "sequential",
         category_filter: str = "",
         exclude_ids: set[str] | None = None,
+        published_pairs: set[tuple[str, str]] | None = None,
+        channel_id: str = "",
     ) -> list[dict[str, Any]]:
         """Return publishable questions in the order the schedule wants them.
 
-        The question is only considered publishable when its status is
-        ``ready``; ``published`` questions are excluded so a restart can never
-        republish them.
+        A question qualifies when its status is ``ready``. When ``channel_id``
+        is given, questions already published *to that channel* are excluded
+        (``published_pairs`` is the ``(channel_id, question_id)`` set from the
+        publishing history); a question published only to another channel stays
+        available here. Without a channel the old global behaviour applies and
+        any question whose status is ``published`` is dropped.
         """
         exclude_ids = exclude_ids or set()
-        candidates = [
-            q
-            for q in self._all()
-            if q["status"] == "ready" and q["id"] not in exclude_ids
-        ]
+        published_pairs = published_pairs or set()
+
+        def _eligible(question: dict[str, Any]) -> bool:
+            if question["id"] in exclude_ids:
+                return False
+            if channel_id:
+                return question["status"] == "ready" and (
+                    channel_id,
+                    question["id"],
+                ) not in published_pairs
+            return question["status"] == "ready"
+
+        candidates = [q for q in self._all() if _eligible(q)]
         if category_filter:
             candidates = [q for q in candidates if q["category"] == category_filter]
 

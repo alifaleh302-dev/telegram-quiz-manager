@@ -26,6 +26,7 @@ class ScheduleIn(BaseModel):
     times: list[str] = Field(default_factory=list)
     weekdays: list[int] = Field(default_factory=list)
     interval_minutes: int = 0
+    start_time: str = ""
     timezone: str = ""
     question_selection: str = "sequential"
     category_filter: str = ""
@@ -34,6 +35,7 @@ class ScheduleIn(BaseModel):
     batch_interval_seconds: int = 0
     start_date: str = ""
     end_date: str = ""
+    queue_only: bool = False
     name: str = ""
 
 

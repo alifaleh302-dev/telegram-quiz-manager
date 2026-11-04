@@ -168,8 +168,14 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
             interval_minutes = int(payload.get("interval_minutes") or 0)
         except (TypeError, ValueError) as exc:
             raise ValidationError("الفاصل الزمني غير صالح.") from exc
-        if not 5 <= interval_minutes <= 24 * 60:
-            raise ValidationError("الفاصل الزمني يجب أن يكون بين 5 دقائق و 24 ساعة.")
+        if not 1 <= interval_minutes <= 24 * 60:
+            raise ValidationError("الفاصل الزمني يجب أن يكون بين دقيقة و 24 ساعة.")
+
+    start_time = _clean_text(
+        payload.get("start_time"), "وقت البداية", max_length=5, required=False
+    )
+    if start_time:
+        start_time = _parse_time(start_time)
 
     selection = str(payload.get("question_selection") or "sequential").strip().lower()
     if selection not in SELECTION_MODES:
@@ -233,6 +239,7 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "times": times,
         "weekdays": sorted(set(weekdays)),
         "interval_minutes": interval_minutes,
+        "start_time": start_time,
         "timezone": timezone,
         "question_selection": selection,
         "category_filter": category_filter,
@@ -241,6 +248,7 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "batch_interval_seconds": batch_interval,
         "start_date": start_date,
         "end_date": end_date,
+        "queue_only": bool(payload.get("queue_only", False)),
         "name": _clean_text(
             payload.get("name"), "اسم الجدول", max_length=100, required=False
         ),

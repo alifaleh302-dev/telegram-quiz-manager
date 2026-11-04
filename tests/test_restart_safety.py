@@ -36,10 +36,16 @@ def test_published_question_is_not_republished_after_restart(services) -> None:
     assert result["status"] == "success"
 
     restarted = build_services(services.settings)
-    assert restarted.questions.get(question["id"])["status"] == "published"
+    # The question stays "ready"; its published state lives per channel in the
+    # history, so it is not republished to the same channel.
+    assert restarted.questions.get(question["id"])["status"] == "ready"
 
-    # The already-published question is no longer a candidate for the schedule.
-    candidates = restarted.questions.pick_candidates(selection="sequential")
+    # The already-published question is no longer a candidate for this channel.
+    candidates = restarted.questions.pick_candidates(
+        selection="sequential",
+        channel_id=channel["id"],
+        published_pairs=restarted.publishing.published_pairs(),
+    )
     assert question["id"] not in {q["id"] for q in candidates}
 
     # And a second attempt is refused outright.
@@ -79,10 +85,15 @@ def test_schedule_progress_persists_across_restart(services) -> None:
     stored = restarted.schedules.get(schedule["id"])
     assert stored["published_count"] == 2
 
-    # The two published questions are excluded on the next run after restart.
+    # The two published questions are excluded on the next run after restart,
+    # per channel (the history is the source of truth).
     published = {e["question_id"] for e in restarted.publishing.history()}
     assert len(published) == 2
-    candidates = restarted.questions.pick_candidates(selection="sequential")
+    candidates = restarted.questions.pick_candidates(
+        selection="sequential",
+        channel_id=channel["id"],
+        published_pairs=restarted.publishing.published_pairs(),
+    )
     assert published.isdisjoint({q["id"] for q in candidates})
 
 

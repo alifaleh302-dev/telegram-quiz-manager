@@ -34,7 +34,10 @@ async def test_publish_marks_question_published_only_after_success(
     entry = await services.publishing.publish(ready_question["id"], channel["id"])
     assert entry["status"] == STATUS_SUCCESS
     assert entry["message_id"] == fake_telegram.sent[0]["message_id"]
-    assert services.questions.get(ready_question["id"])["status"] == "published"
+    # Publishing state is per channel and derived from the history, so the
+    # question record itself is not flipped to a global "published" status.
+    assert services.questions.get(ready_question["id"])["status"] == "ready"
+    assert (channel["id"], ready_question["id"]) in services.publishing.published_pairs()
 
 
 async def test_publish_timeout_is_recorded_as_unknown(
@@ -151,7 +154,7 @@ async def test_retry_succeeds_after_transient_failure(
     retried = await services.publishing.retry(entry["id"])
     assert retried["status"] == STATUS_SUCCESS
     assert retried["attempts"] == 2
-    assert services.questions.get(ready_question["id"])["status"] == "published"
+    assert (channel["id"], ready_question["id"]) in services.publishing.published_pairs()
 
 
 async def test_retry_recovers_an_unknown_entry(services, ready_question, channel, fake_telegram) -> None:
@@ -164,7 +167,7 @@ async def test_retry_recovers_an_unknown_entry(services, ready_question, channel
     fake_telegram.fail_with = None
     retried = await services.publishing.retry(entry["id"])
     assert retried["status"] == STATUS_SUCCESS
-    assert services.questions.get(ready_question["id"])["status"] == "published"
+    assert (channel["id"], ready_question["id"]) in services.publishing.published_pairs()
 
 
 async def test_retry_refuses_successful_entry(services, ready_question, channel) -> None:

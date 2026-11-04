@@ -131,24 +131,45 @@ class ScheduleRunner:
 
         channel = schedule["channel_id"]
         # Questions pinned to this schedule (assigned from the bank) go first, in
-        # the exact order they were queued; any remaining slots are filled from
-        # the normal auto-selection so a queue never blocks a schedule.
+        # the exact order they were queued. A queued id is used even if it was
+        # already published to this channel before, because pinning it is an
+        # explicit re-publish decision (the publish window warns about repeats).
+        # Any remaining slots are filled from the normal auto-selection, which is
+        # filtered per channel so a question already sent here is not repeated.
+        queue_only = bool(schedule.get("queue_only"))
         queued_ids = self._schedules.queue_of(schedule)
-        candidates = []
+        candidates: list[dict[str, Any]] = []
         if queued_ids:
-            by_id = {q["id"]: q for q in self._questions.pick_candidates()}
-            candidates = [by_id[qid] for qid in queued_ids if qid in by_id]
-        if len(candidates) < target:
+            candidates = [
+                question
+                for question in (self._questions.get(qid) for qid in queued_ids)
+                if question and question.get("status") == "ready"
+            ]
+        if not queue_only and len(candidates) < target:
             chosen = {q["id"] for q in candidates}
             for question in self._questions.pick_candidates(
                 selection=schedule.get("question_selection", "sequential"),
                 category_filter=schedule.get("category_filter", ""),
                 exclude_ids=chosen,
+                channel_id=channel,
+                published_pairs=self._publishing.published_pairs(),
             ):
                 candidates.append(question)
                 if len(candidates) >= target:
                     break
         if not candidates:
+            if queue_only:
+                # A dedicated schedule whose list is exhausted is retired so it
+                # stops firing empty; it is left visible for the operator.
+                self._schedules.set_enabled(schedule_id, False, actor="scheduler")
+                self._audit.record(
+                    "schedule.completed",
+                    message=(
+                        f"اكتملت قائمة الجدول المخصص {schedule_id}؛ تم إيقافه تلقائياً."
+                    ),
+                    schedule_id=schedule_id,
+                )
+                return {"ok": False, "reason": "queue-completed"}
             self._audit.record(
                 "publishing.no_questions",
                 level="warning",
@@ -159,48 +180,66 @@ class ScheduleRunner:
 
         published = 0
         failures = 0
+        cancelled = 0
         last_question_id = ""
         waited = 0.0
         published_ids: list[str] = []
-        for index, question in enumerate(candidates[:target]):
-            if index and gap and waited < MAX_BATCH_WAIT_SECONDS:
-                delay = min(gap, MAX_BATCH_WAIT_SECONDS - waited)
-                waited += delay
-                await asyncio.sleep(delay)
-            if global_limit and self._published_today_global() >= global_limit:
-                break
-            last_question_id = question["id"]
-            try:
-                entry = await self._publishing.publish(
-                    question["id"],
-                    channel,
-                    schedule_id=schedule_id,
-                    trigger=trigger,
-                )
-            except ValidationError as exc:
-                logger.info("schedule %s skipped %s: %s", schedule_id, question["id"], exc)
-                continue
+        batch = candidates[:target]
+        self._publishing.begin_run(kind="schedule", channel_id=channel, total=len(batch))
+        try:
+            for index, question in enumerate(batch):
+                if self._publishing.cancel_requested:
+                    cancelled = len(batch) - index
+                    self._audit.record(
+                        "publishing.cancelled",
+                        level="warning",
+                        message=(
+                            f"تم إلغاء الدفعة المجدولة {schedule_id} بعد {index} من "
+                            f"{len(batch)} سؤالاً."
+                        ),
+                        schedule_id=schedule_id,
+                    )
+                    break
+                if index and gap and waited < MAX_BATCH_WAIT_SECONDS:
+                    delay = min(gap, MAX_BATCH_WAIT_SECONDS - waited)
+                    waited += delay
+                    await asyncio.sleep(delay)
+                if global_limit and self._published_today_global() >= global_limit:
+                    break
+                last_question_id = question["id"]
+                try:
+                    entry = await self._publishing.publish(
+                        question["id"],
+                        channel,
+                        schedule_id=schedule_id,
+                        trigger=trigger,
+                    )
+                except ValidationError as exc:
+                    logger.info("schedule %s skipped %s: %s", schedule_id, question["id"], exc)
+                    continue
 
-            if entry["status"] == "success":
-                published += 1
-                published_ids.append(question["id"])
-            else:
-                failures += 1
+                if entry["status"] == "success":
+                    published += 1
+                    published_ids.append(question["id"])
+                else:
+                    failures += 1
 
-            # Retry policy: queue a follow-up when the failure is transient.
-            if entry["status"] == "failed" and entry.get("retryable"):
-                self._audit.record(
-                    "publishing.retry_scheduled",
-                    level="warning",
-                    message=(
-                        f"سيُعاد محاولة نشر {question['id']} وفق سياسة إعادة المحاولة "
-                        f"(المحاولة {entry['attempts']})."
-                    ),
-                )
+                # Retry policy: queue a follow-up when the failure is transient.
+                if entry["status"] == "failed" and entry.get("retryable"):
+                    self._audit.record(
+                        "publishing.retry_scheduled",
+                        level="warning",
+                        message=(
+                            f"سيُعاد محاولة نشر {question['id']} وفق سياسة إعادة المحاولة "
+                            f"(المحاولة {entry['attempts']})."
+                        ),
+                    )
+        finally:
+            self._publishing.end_run()
 
         # Drop what we just published from the queue, plus anything queued that
-        # is no longer publishable (deleted, or already published elsewhere) so
-        # the queue cannot get stuck on a dead entry.
+        # is no longer publishable (deleted, or not ``ready``) so the queue
+        # cannot get stuck on a dead entry.
         if queued_ids:
             stale = [
                 qid
@@ -208,7 +247,18 @@ class ScheduleRunner:
                 if (question := self._questions.get(qid)) is None
                 or question.get("status") != "ready"
             ]
-            self._schedules.consume_queue(schedule_id, published_ids + stale)
+            updated = self._schedules.consume_queue(schedule_id, published_ids + stale)
+            # A dedicated schedule that just emptied itself is retired at once so
+            # it does not fire one more time only to report an empty queue.
+            if queue_only and not self._schedules.queue_of(updated):
+                self._schedules.set_enabled(schedule_id, False, actor="scheduler")
+                self._audit.record(
+                    "schedule.completed",
+                    message=(
+                        f"اكتملت قائمة الجدول المخصص {schedule_id}؛ تم إيقافه تلقائياً."
+                    ),
+                    schedule_id=schedule_id,
+                )
 
         self._schedules.record_run(
             schedule_id, advance=published > 0, advance_by=published
@@ -228,6 +278,7 @@ class ScheduleRunner:
             "ok": published > 0,
             "published": published,
             "failed": failures,
+            "cancelled": cancelled,
             "requested": target,
             "gap_seconds": gap,
             "question_id": last_question_id,

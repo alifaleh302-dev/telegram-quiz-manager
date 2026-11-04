@@ -2,7 +2,9 @@
 
 Guarantees implemented here:
 
-* A question is only marked ``published`` after Telegram confirms delivery.
+* Publishing state is tracked **per channel** in the history: a question sent
+  to channel A is still new for channel B. A question is only counted as
+  published for a channel after Telegram confirms delivery to that channel.
 * A question is *claimed* (a ``pending`` history row) before the network call,
   so a crash mid-send leaves an auditable row instead of a silent duplicate.
 * Two publishes for the same question+channel cannot run at the same time.
@@ -42,6 +44,7 @@ STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
 STATUS_PENDING = "pending"
 STATUS_UNKNOWN = "unknown"
+STATUS_CANCELLED = "cancelled"
 
 # Injected in tests so pacing/flood waits do not actually sleep.
 Sleeper = Callable[[float], Awaitable[None]]
@@ -67,6 +70,15 @@ class PublishingService:
         self._client = client
         self._lock = asyncio.Lock()
         self._sleep = sleep
+        # Cancellation for an in-progress run (a bulk publish or a schedule
+        # batch). The flag is checked between sends, so clicking "cancel" stops
+        # the run after the message already in flight, never mid-send. Runs are
+        # counted rather than stored in one slot: a scheduled batch and a manual
+        # burst can overlap, and a cancel click must stop every active run while
+        # the flag stays set until the last one drains.
+        self._cancel = asyncio.Event()
+        self._active_run: dict[str, Any] | None = None
+        self._run_count = 0
 
     # --- history -----------------------------------------------------------
     def history(self, limit: int = 100, status: str = "") -> list[dict[str, Any]]:
@@ -82,6 +94,55 @@ class PublishingService:
             if e["question_id"] == question_id
         ]
 
+    def published_pairs(self) -> set[tuple[str, str]]:
+        """``(channel_id, question_id)`` pairs that were published successfully.
+
+        Publishing state is *per channel*: a question published to channel A is
+        still new for channel B. The history is the single source of truth, so
+        nothing here depends on the question's own ``status`` field.
+        """
+        return {
+            (e["channel_id"], e["question_id"])
+            for e in self._storage.history.read()["history"]
+            if e["status"] == STATUS_SUCCESS
+        }
+
+    def published_channels_for(self, question_id: str) -> list[str]:
+        """Channel ids this question was already published to, in order."""
+        channels: list[str] = []
+        for entry in self._storage.history.read()["history"]:
+            if entry["status"] == STATUS_SUCCESS and entry["question_id"] == question_id:
+                if entry["channel_id"] not in channels:
+                    channels.append(entry["channel_id"])
+        return channels
+
+    def _channel_published(self, question_id: str, channel_id: str) -> bool:
+        return any(
+            entry["status"] == STATUS_SUCCESS
+            and entry["question_id"] == question_id
+            and entry["channel_id"] == channel_id
+            for entry in self._storage.history.read()["history"]
+        )
+
+    def duplicates(
+        self, question_ids: list[str], channel_id: str
+    ) -> list[dict[str, Any]]:
+        """Of ``question_ids``, which were already published to ``channel_id``.
+
+        Returns one row per *first* occurrence (order preserved) so the publish
+        window can list just the repeats for an explicit re-publish decision.
+        """
+        ordered = list(dict.fromkeys(str(qid) for qid in question_ids if qid))
+        if not ordered or not channel_id:
+            return []
+        pairs = self.published_pairs()
+        return [
+            {"id": qid, "published": True}
+            for qid in ordered
+            if (channel_id, qid) in pairs
+        ]
+
+
     def _claim(
         self,
         question_id: str,
@@ -96,6 +157,9 @@ class PublishingService:
         ``allow_repeat`` is set only for a human-initiated manual publish, where
         posting the same question again is an explicit, deliberate choice. Even
         then a concurrent publish of the same question+channel is refused.
+
+        The duplicate guard is scoped to ``channel_id``: a question already sent
+        to another channel is *not* a repeat here, so it stays publishable.
         """
 
         def _mutate(document: dict[str, Any]) -> dict[str, Any]:
@@ -110,10 +174,11 @@ class PublishingService:
                     not allow_repeat
                     and entry["status"] == STATUS_SUCCESS
                     and entry["question_id"] == question_id
+                    and entry["channel_id"] == channel_id
                 ):
                     raise ValidationError(
                         f"السؤال {question_id} نُشر مسبقاً بنجاح على القناة "
-                        f"{entry['channel_id']}؛ لن يُعاد نشره."
+                        f"{channel_id}؛ لن يُعاد نشره."
                     )
 
             document["counter"] = int(document.get("counter", 0)) + 1
@@ -168,14 +233,59 @@ class PublishingService:
 
         return self._storage.history.update(_mutate)
 
-    def _mark_question_published(self, question_id: str) -> None:
-        self._questions._storage.questions.update(  # noqa: SLF001 - intentional
-            lambda doc: [
-                q.update({"status": "published", "updated_at": utc_now_iso()})
-                for q in doc["questions"]
-                if q["id"] == question_id
-            ]
-        )
+    # --- run control (cancel an in-progress publish) -----------------------
+    def begin_run(self, *, kind: str, channel_id: str, total: int) -> None:
+        """Register a cancellable run and clear any stale cancel flag."""
+        self._run_count += 1
+        if self._run_count == 1:
+            # Only the first overlapping run resets the flag; a second run
+            # starting mid-burst must not clear a cancel the user just clicked.
+            self._cancel.clear()
+        self._active_run = {
+            "kind": kind,
+            "channel_id": channel_id,
+            "total": total,
+            "done": 0,
+            "started_at": utc_now_iso(),
+            "cancel_requested": self._cancel.is_set(),
+        }
+
+    def end_run(self) -> None:
+        self._run_count = max(0, self._run_count - 1)
+        if self._run_count == 0:
+            self._active_run = None
+            self._cancel.clear()
+        elif self._active_run is not None:
+            self._active_run["cancel_requested"] = self._cancel.is_set()
+
+    def note_progress(self, done: int) -> None:
+        if self._active_run is not None:
+            self._active_run["done"] = done
+
+    def request_cancel(self) -> bool:
+        """Ask the in-progress run to stop after the message now in flight.
+
+        Returns ``True`` if a run was active and has been flagged. The flag is
+        cleared automatically when the last run finishes, so a later run is not
+        cancelled by a stale click.
+        """
+        if self._run_count == 0:
+            return False
+        self._cancel.set()
+        if self._active_run is not None:
+            self._active_run["cancel_requested"] = True
+        return True
+
+    @property
+    def is_publishing(self) -> bool:
+        return self._run_count > 0
+
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel.is_set()
+
+    def active_run(self) -> dict[str, Any] | None:
+        return dict(self._active_run) if self._active_run else None
 
     # --- publishing --------------------------------------------------------
     def pacing(self) -> tuple[int, int]:
@@ -294,7 +404,6 @@ class PublishingService:
                     message_id=result.message_id,
                     poll_id=result.poll_id,
                 )
-                self._mark_question_published(question_id)
                 self._channels.record_publish(channel_id, STATUS_SUCCESS)
                 self._audit.record(
                     "publishing.success",
@@ -346,6 +455,8 @@ class PublishingService:
         actor: str = "system",
         trigger: str = "manual",
         interval_seconds: int | None = None,
+        cancellable: bool = True,
+        kind: str = "bulk",
     ) -> list[dict[str, Any]]:
         """Publish several questions to one channel, spaced out to respect limits.
 
@@ -353,36 +464,77 @@ class PublishingService:
         caller gets one result row per question in the original order. Pacing is
         what makes a 50-question burst safe: without it Telegram rate-limits the
         channel after roughly 20 messages in a minute.
+
+        When ``cancellable`` the run registers itself as the active run so
+        ``request_cancel()`` can stop it between sends. Questions not reached are
+        reported with status ``cancelled`` (not sent, and no history row).
         """
         interval, _ = self.pacing()
         if interval_seconds is not None:
             interval = max(0, int(interval_seconds))
 
+        if cancellable:
+            self.begin_run(kind=kind, channel_id=channel_id, total=len(question_ids))
+
         results: list[dict[str, Any]] = []
-        for index, question_id in enumerate(question_ids):
-            if index and interval:
-                await self._sleep(interval)
-            try:
-                entry = await self.publish(
-                    question_id,
-                    channel_id,
-                    trigger=trigger,
-                    actor=actor,
-                    respect_pause=False,
-                    allow_repeat=True,
-                )
-                results.append(
-                    {
-                        "question_id": question_id,
-                        "status": entry["status"],
-                        "entry_id": entry["id"],
-                        "error": entry.get("error") or "",
-                    }
-                )
-            except ValidationError as exc:
-                results.append(
-                    {"question_id": question_id, "status": STATUS_FAILED, "error": str(exc)}
-                )
+        try:
+            for index, question_id in enumerate(question_ids):
+                if self.cancel_requested:
+                    self._audit.record(
+                        "publishing.cancelled",
+                        actor=actor,
+                        level="warning",
+                        message=(
+                            f"تم إلغاء النشر بعد {len(results)} من {len(question_ids)} سؤالاً "
+                            "بناءً على طلب المستخدم."
+                        ),
+                        channel_id=channel_id,
+                    )
+                    for remaining in question_ids[index:]:
+                        results.append(
+                            {
+                                "question_id": remaining,
+                                "status": STATUS_CANCELLED,
+                                "entry_id": None,
+                                "error": "أُلغي النشر قبل إرسال هذا السؤال.",
+                            }
+                        )
+                    break
+
+                if index and interval:
+                    await self._sleep(interval)
+
+                try:
+                    entry = await self.publish(
+                        question_id,
+                        channel_id,
+                        trigger=trigger,
+                        actor=actor,
+                        respect_pause=False,
+                        allow_repeat=True,
+                    )
+                    results.append(
+                        {
+                            "question_id": question_id,
+                            "status": entry["status"],
+                            "entry_id": entry["id"],
+                            "error": entry.get("error") or "",
+                        }
+                    )
+                except ValidationError as exc:
+                    results.append(
+                        {
+                            "question_id": question_id,
+                            "status": STATUS_FAILED,
+                            "entry_id": None,
+                            "error": str(exc),
+                        }
+                    )
+                if self._active_run is not None:
+                    self._active_run["done"] = len(results)
+        finally:
+            if cancellable:
+                self.end_run()
         return results
 
     async def retry(self, entry_id: str, *, actor: str = "system") -> dict[str, Any]:
@@ -418,7 +570,6 @@ class PublishingService:
                     message_id=result.message_id,
                     bump_attempts=True,
                 )
-                self._mark_question_published(entry["question_id"])
                 self._channels.record_publish(entry["channel_id"], STATUS_SUCCESS)
             else:
                 final = self._finish(
@@ -484,4 +635,13 @@ class PublishingService:
             "pending": pending,
             "unknown": unknown,
             "today": today_count,
+        }
+
+    def progress(self) -> dict[str, Any]:
+        """Live state of the in-progress run, for the cancel UI to poll."""
+        run = self.active_run()
+        return {
+            "running": self.is_publishing,
+            "cancel_requested": self.cancel_requested,
+            "run": run,
         }

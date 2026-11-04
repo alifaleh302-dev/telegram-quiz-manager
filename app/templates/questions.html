@@ -110,6 +110,15 @@
             <td>
               {% set status_label = {'draft':'مسودة','ready':'جاهز','published':'منشور'} %}
               <span class="badge status-{{ question.status }}">{{ status_label.get(question.status, question.status) }}</span>
+              {% if question.published_channels %}
+              <div class="q-channels mt-1">
+                {% for channel in question.published_channels %}
+                <span class="badge text-bg-success" title="نُشر على {{ channel.name }}">
+                  <i class="bi bi-telegram"></i> {{ channel.name }}
+                </span>
+                {% endfor %}
+              </div>
+              {% endif %}
             </td>
             <td class="text-end">
               <div class="btn-group btn-group-sm">
@@ -150,19 +159,16 @@
 
   {% if 'questions' in permissions and 'publish' in permissions %}
   <!-- Bulk publish: send every selected question to one channel -->
-  <div class="modal fade" id="bulkPublishModal" tabindex="-1" data-pacing-interval="{{ pacing_interval }}">
-    <div class="modal-dialog modal-dialog-centered">
+  <div class="modal fade" id="bulkPublishModal" tabindex="-1"
+       data-pacing-interval="{{ pacing_interval }}"
+       data-can-schedule="{{ '1' if 'schedules' in permissions else '0' }}">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title"><i class="bi bi-send-fill"></i> نشر الأسئلة المحددة</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <div class="mb-3">
-            <span class="mini-label">الأسئلة المحددة</span>
-            <p class="mb-1"><strong id="bpCount">0</strong> سؤالاً</p>
-            <ul class="bp-list" id="bpList"></ul>
-          </div>
           <div class="mb-3">
             <label class="form-label" for="bpChannel">القناة المستهدفة</label>
             <select class="form-select" id="bpChannel">
@@ -176,48 +182,97 @@
             <div class="form-text text-warning">لا توجد قنوات بعد. أضف قناة من صفحة القنوات أولاً.</div>
             {% endif %}
           </div>
-          {% if 'schedules' in permissions %}
+
+          <!-- Duplicate warning for the chosen channel: repeats are unchecked by
+               default and only re-published if the user opts in. -->
+          <div class="alert alert-danger bp-duplicates d-none" id="bpDuplicates">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+              <span>
+                <i class="bi bi-exclamation-octagon-fill"></i>
+                <strong>هل تريد إعادة نشر هذه الأسئلة التي سبق نشرها في هذه القناة؟</strong>
+              </span>
+              <span class="btn-group btn-group-sm">
+                <button type="button" class="btn btn-outline-light" id="bpDupAll">تحديد الكل</button>
+                <button type="button" class="btn btn-outline-light" id="bpDupNone">إلغاء تحديد الكل</button>
+              </span>
+            </div>
+            <p class="small mb-1 mt-2">
+              الأسئلة التالية نُشرت مسبقاً على هذه القناة. غير المحدد منها سيُستبعد؛
+              حدّد ما تريد إعادة نشره فعلاً.
+            </p>
+            <ul class="bp-list bp-dup-list" id="bpDupList"></ul>
+          </div>
+
           <div class="mb-3">
-            <label class="form-label" for="bpSchedule">قالب الجدولة <span class="hint">(اختياري)</span></label>
-            <select class="form-select" id="bpSchedule">
-              <option value="">— إرسال فوري الآن —</option>
-              {% for template in schedule_templates %}
-              <option value="{{ template.id }}" data-channel="{{ template.channel_id }}">
-                {{ template.name }} · {{ template.channel_name }}
-                {%- if template.queued %} (مرتبط: {{ template.queued }}){% endif %}
-              </option>
-              {% endfor %}
-            </select>
-            <div class="form-text" id="bpScheduleHint">
-              اختر قالب جدولة (من صفحة الجدولة) لربط الأسئلة المحددة به،
-              فتُنشر تلقائياً بالترتيب حسب مواعيده. القوالب معروضة للقناة المختارة فقط.
+            <span class="mini-label">الأسئلة المحددة</span>
+            <p class="mb-1"><strong id="bpCount">0</strong> سؤالاً</p>
+            <ul class="bp-list" id="bpList"></ul>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">طريقة النشر</label>
+            {% if 'schedules' in permissions %}
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="bpMode" id="bpModeNow" value="now" checked>
+              <label class="form-check-label" for="bpModeNow">
+                <i class="bi bi-send-fill"></i> إرسال فوري الآن
+                <span class="hint">(مع التباعد الزمني ومكافحة الـ Flood)</span>
+              </label>
             </div>
-            {% if not schedule_templates %}
-            <div class="form-text text-warning">
-              لا توجد قوالب جدولة بعد. أنشئ قالباً من صفحة الجدولة لربط الأسئلة به.
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="bpMode" id="bpModeSchedule" value="schedule">
+              <label class="form-check-label" for="bpModeSchedule">
+                <i class="bi bi-calendar2-plus"></i> إنشاء جدول مخصص لهذه الدفعة
+              </label>
             </div>
+            {% else %}
+            <div class="form-text">إرسال فوري الآن (مع التباعد الزمني ومكافحة الـ Flood).</div>
             {% endif %}
           </div>
-          {% endif %}
-          <div class="alert alert-info small py-2 mb-3" id="bpImmediateNote">
+
+          <div class="bp-dedicated d-none" id="bpDedicated">
+            <div class="row g-2">
+              <div class="col-6 col-md-3">
+                <label class="form-label" for="bpInterval">الفاصل (دقائق)</label>
+                <input class="form-control" type="number" id="bpInterval" min="1" max="1440" value="30">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label" for="bpStartTime">وقت البداية</label>
+                <input class="form-control" type="time" id="bpStartTime">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label" for="bpEndDate">تاريخ الانتهاء</label>
+                <input class="form-control" type="date" id="bpEndDate">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label" for="bpPerRun">أسئلة كل دفعة</label>
+                <input class="form-control" type="number" id="bpPerRun" min="1" max="10" value="1">
+              </div>
+            </div>
+            <div class="form-text mt-1">
+              يُنشئ جدولاً جديداً خاصاً بهذه القناة ويربط القائمة المعتمدة به،
+              ثم ينشرها تباعاً حسب الفاصل الزمني.
+            </div>
+          </div>
+
+          <div class="alert alert-info small py-2 mb-3 mt-3" id="bpImmediateNote">
             <i class="bi bi-hourglass-split"></i>
             التباعد بين الأسئلة: <strong>{{ pacing_interval }}</strong> ثانية.
             تيليجرام يحدّ سرعة الإرسال لكل قناة، لذلك النشر الجماعي يأخذ وقتاً؛
             لا تغلق الصفحة أثناء النشر.
             <div class="mt-1">الوقت المتوقع للدفعة: <strong id="bpEstimate">—</strong></div>
           </div>
-          <div class="alert alert-warning small py-2 mb-3 d-none" id="bpAssignNote">
-            <i class="bi bi-calendar2-week"></i>
-            سيتم <strong>ربط</strong> الأسئلة المحددة بقالب الجدولة المختار فقط؛
-            لن يُنشر أي سؤال الآن. يُرسلها القالب حسب مواعيده وبالترتيب المحدد.
-          </div>
           <div class="progress d-none" id="bpProgressWrap" style="height: 8px;">
             <div class="progress-bar progress-bar-striped progress-bar-animated"
                  id="bpProgress" role="progressbar" style="width: 0%"></div>
           </div>
+          <p class="small text-muted mt-2 mb-0 d-none" id="bpProgressText"></p>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">إغلاق</button>
+          <button class="btn btn-danger d-none" type="button" id="bpCancelRun">
+            <i class="bi bi-stop-circle"></i> إيقاف النشر
+          </button>
           <button class="btn btn-success" type="button" id="bpConfirm" {{ 'disabled' if not channels }}>
             <i class="bi bi-send-fill"></i> نشر الآن
           </button>

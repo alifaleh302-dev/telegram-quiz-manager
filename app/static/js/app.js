@@ -608,21 +608,29 @@ const TQM = (() => {
     });
   }
 
-  // ---------- Bulk publish / assign (selected questions -> channel or schedule) ----------
+  // ---------- Bulk publish (selected questions -> channel, now or dedicated) ----------
   function initBulkPublish() {
     const modalEl = document.getElementById('bulkPublishModal');
     if (!modalEl) return;
     const confirmBtn = document.getElementById('bpConfirm');
     const channelSelect = document.getElementById('bpChannel');
-    const scheduleSelect = document.getElementById('bpSchedule');
     const progressWrap = document.getElementById('bpProgressWrap');
     const progressBar = document.getElementById('bpProgress');
     const estimateEl = document.getElementById('bpEstimate');
     const immediateNote = document.getElementById('bpImmediateNote');
-    const assignNote = document.getElementById('bpAssignNote');
+    const dedicatedBox = document.getElementById('bpDedicated');
+    const modeNow = document.getElementById('bpModeNow');
+    const modeSchedule = document.getElementById('bpModeSchedule');
+    const dupBox = document.getElementById('bpDuplicates');
+    const dupList = document.getElementById('bpDupList');
+    const cancelBtn = document.getElementById('bpCancelRun');
+    const progressText = document.getElementById('bpProgressText');
+    const canSchedule = modalEl.dataset.canSchedule === '1';
     // Server-rendered pacing interval, so the estimate matches what will happen.
     const interval = Number(modalEl.dataset.pacingInterval || 0);
-    let pending = [];
+    let pending = [];      // every selected id, in selection order
+    let duplicateIds = []; // subset already published to the chosen channel
+    let pollTimer = null;
 
     function humanDuration(seconds) {
       if (seconds < 60) return `${seconds} ثانية`;
@@ -631,132 +639,227 @@ const TQM = (() => {
       return rest ? `${minutes} دقيقة و${rest} ثانية` : `${minutes} دقيقة`;
     }
 
+    // The ids that will actually be published: every selected question except the
+    // duplicates the user left unchecked.
+    function approvedIds() {
+      const keepDuplicates = new Set(
+        Array.from(dupList?.querySelectorAll('input[type="checkbox"]:checked') || [])
+          .map((box) => box.value)
+      );
+      return pending.filter((id) => !duplicateIds.includes(id) || keepDuplicates.has(id));
+    }
+
     function refreshEstimate() {
       if (!estimateEl) return;
-      const seconds = Math.max(0, (pending.length - 1)) * interval;
+      const seconds = Math.max(0, (approvedIds().length - 1)) * interval;
       estimateEl.textContent = humanDuration(seconds);
     }
 
-    // A schedule template only accepts questions for its own channel, so keep
-    // the picker in step with the chosen channel and hide mismatched options.
-    function syncSchedules() {
-      if (!scheduleSelect) return;
-      const channelId = channelSelect?.value || '';
-      let firstMatch = '';
-      let visible = 0;
-      Array.from(scheduleSelect.options).forEach((option) => {
-        if (!option.value) return; // the "send now" option is always valid
-        const matches = option.dataset.channel === channelId;
-        option.hidden = !matches;
-        option.disabled = !matches;
-        if (matches) { visible += 1; if (!firstMatch) firstMatch = option.value; }
-      });
-      const current = scheduleSelect.selectedOptions[0];
-      if (current && current.value && current.dataset.channel !== channelId) {
-        scheduleSelect.value = '';
+    function questionText(id) {
+      const row = document.querySelector(`tr[data-question-id="${id}"] .q-text`);
+      return row ? row.textContent.trim().slice(0, 70) : '';
+    }
+
+    function renderDuplicates() {
+      if (!dupBox || !dupList) return;
+      if (!duplicateIds.length) {
+        dupBox.classList.add('d-none');
+        dupList.innerHTML = '';
+        return;
       }
-      scheduleSelect.disabled = visible === 0;
+      dupBox.classList.remove('d-none');
+      dupList.innerHTML = duplicateIds
+        .map(
+          (id) => `<li class="bp-dup-item">
+            <input type="checkbox" class="form-check-input dup-check" value="${id}" id="dup-${id}">
+            <label class="form-check-label" for="dup-${id}">
+              <code>${id}</code> ${questionText(id)}
+            </label>
+          </li>`
+        )
+        .join('');
+      dupList.querySelectorAll('.dup-check').forEach((box) =>
+        box.addEventListener('change', refreshEstimate)
+      );
+      // Default: nothing selected, so repeats are excluded unless opted in.
+      refreshEstimate();
+    }
+
+    async function loadDuplicates() {
+      duplicateIds = [];
+      renderDuplicates();
+      if (!pending.length || !channelSelect?.value) return;
+      const result = await api('/api/publishing/duplicates', {
+        method: 'POST',
+        body: { question_ids: pending, channel_id: channelSelect.value },
+      });
+      if (result.ok && result.data) {
+        duplicateIds = result.data.duplicates.map((row) => row.id);
+        renderDuplicates();
+      }
     }
 
     function syncMode() {
-      const assigning = Boolean(scheduleSelect?.value);
-      if (immediateNote) immediateNote.classList.toggle('d-none', assigning);
-      if (assignNote) assignNote.classList.toggle('d-none', !assigning);
+      const scheduling = canSchedule && modeSchedule?.checked;
+      dedicatedBox?.classList.toggle('d-none', !scheduling);
+      immediateNote?.classList.toggle('d-none', Boolean(scheduling));
       if (confirmBtn) {
-        confirmBtn.innerHTML = assigning
-          ? '<i class="bi bi-calendar2-check"></i> ربط بالجدول'
+        confirmBtn.innerHTML = scheduling
+          ? '<i class="bi bi-calendar2-plus"></i> إنشاء الجدول المخصص'
           : '<i class="bi bi-send-fill"></i> نشر الآن';
       }
     }
 
-    channelSelect?.addEventListener('change', () => { syncSchedules(); syncMode(); });
-    scheduleSelect?.addEventListener('change', syncMode);
+    channelSelect?.addEventListener('change', () => { loadDuplicates(); syncMode(); });
+    modeNow?.addEventListener('change', syncMode);
+    modeSchedule?.addEventListener('change', syncMode);
+    document.getElementById('bpDupAll')?.addEventListener('click', () => {
+      dupList?.querySelectorAll('.dup-check').forEach((box) => { box.checked = true; });
+      refreshEstimate();
+    });
+    document.getElementById('bpDupNone')?.addEventListener('click', () => {
+      dupList?.querySelectorAll('.dup-check').forEach((box) => { box.checked = false; });
+      refreshEstimate();
+    });
 
-    confirmBtn?.addEventListener('click', async () => {
-      if (!pending.length) return;
-      const channelId = channelSelect?.value;
-      if (!channelId) { toast('اختر قناة أولاً.', 'warning'); return; }
-      const scheduleId = scheduleSelect?.value || '';
+    cancelBtn?.addEventListener('click', async () => {
+      // Ask the server to stop; it halts after the message already in flight.
+      cancelBtn.disabled = true;
+      cancelBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ الإيقاف...';
+      const result = await api('/api/publishing/cancel', { method: 'POST' });
+      cancelBtn.disabled = false;
+      cancelBtn.innerHTML = '<i class="bi bi-stop-circle"></i> إيقاف النشر';
+      if (result.ok) toast('تم إرسال طلب الإيقاف؛ سيتوقف النشر بعد الرسالة الحالية.', 'warning');
+      else toast(result.error || 'تعذّر إيقاف النشر', 'error');
+    });
 
-      // Assign mode: just pin the questions to the template, no sending now.
-      if (scheduleId) {
-        confirmBtn.disabled = true;
-        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ الربط...';
-        const assign = await api(`/api/schedules/${scheduleId}/assign`, {
-          method: 'POST',
-          body: { question_ids: pending },
-        });
-        confirmBtn.disabled = false;
+    // Stop polling whenever the modal closes, so a stale timer cannot linger.
+    modalEl.addEventListener('hidden.bs.modal', () => {
+      stopPolling();
+      cancelBtn?.classList.add('d-none');
+    });
+
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function setRunning(running) {
+      // While a run is active the confirm button is disabled and a cancel button
+      // is offered, so the user can stop a long burst mid-flight.
+      if (confirmBtn) confirmBtn.disabled = running;
+      cancelBtn?.classList.toggle('d-none', !running);
+      if (running) {
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ النشر...';
+        progressWrap?.classList.remove('d-none');
+        progressText?.classList.remove('d-none');
+      } else {
+        progressText?.classList.add('d-none');
         syncMode();
-        if (assign.ok && assign.data) {
-          toast(`تم ربط ${assign.data.assigned} سؤالاً بالقالب (الإجمالي ${assign.data.queued})`);
-          bootstrap.Modal.getInstance(modalEl)?.hide();
-          setTimeout(() => window.location.reload(), 1000);
-        } else {
-          toast(assign.data?.error || assign.error || 'فشل الربط', 'error');
-        }
-        return;
       }
+    }
 
-      confirmBtn.disabled = true;
-      confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ النشر...';
-      if (progressWrap) progressWrap.classList.remove('d-none');
-      // The server sends one batch request, so advance the bar on a timer that
-      // matches the pacing interval — it is an estimate, not live progress.
-      let done = 0;
-      const timer = interval
-        ? setInterval(() => {
-            done = Math.min(done + 1, pending.length);
-            if (progressBar) progressBar.style.width = `${(done / pending.length) * 100}%`;
-          }, interval * 1000)
-        : null;
+    function startPolling(total) {
+      stopPolling();
+      pollTimer = setInterval(async () => {
+        const result = await api('/api/publishing/progress');
+        if (!result.ok || !result.data) return;
+        const run = result.data.run;
+        const done = run ? run.done : total;
+        if (progressBar && total) progressBar.style.width = `${(done / total) * 100}%`;
+        if (progressText) {
+          const suffix = result.data.cancel_requested ? ' — جارٍ الإيقاف...' : '';
+          progressText.textContent = `تم نشر ${done} من ${total}${suffix}`;
+        }
+        if (!result.data.running) stopPolling();
+      }, Math.max(1000, interval * 1000));
+    }
+
+    async function publishNow(ids) {
+      setRunning(true);
+      startPolling(ids.length);
 
       const result = await api('/api/publishing/bulk', {
         method: 'POST',
-        body: { question_ids: pending, channel_id: channelId },
+        body: { question_ids: ids, channel_id: channelSelect?.value },
       });
-      if (timer) clearInterval(timer);
+      stopPolling();
+      setRunning(false);
       if (progressBar) progressBar.style.width = '100%';
-      confirmBtn.disabled = false;
-      syncMode();
 
       if (result.ok && result.data) {
-        const { succeeded, failed, total } = result.data;
-        if (failed) {
+        const { succeeded, failed, cancelled, total } = result.data;
+        if (cancelled) {
+          toast(`أُوقف النشر: نُشر ${succeeded} من ${total}، وأُلغي ${cancelled}`, 'warning');
+        } else if (failed) {
           toast(`تم نشر ${succeeded} من ${total} — فشل ${failed}`, 'warning');
         } else {
           toast(`تم نشر ${succeeded} سؤالاً بنجاح`);
         }
         bootstrap.Modal.getInstance(modalEl)?.hide();
-        setTimeout(() => window.location.reload(), 1200);
+        setTimeout(() => window.location.reload(), 1400);
       } else {
         toast(result.data?.error || result.error || 'فشل النشر', 'error');
       }
+    }
+
+    async function createDedicated(ids) {
+      confirmBtn.disabled = true;
+      confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ الإنشاء...';
+      const result = await api('/api/publishing/dedicated-schedule', {
+        method: 'POST',
+        body: {
+          channel_id: channelSelect?.value,
+          question_ids: ids,
+          interval_minutes: Number(document.getElementById('bpInterval')?.value || 30),
+          start_time: document.getElementById('bpStartTime')?.value || '',
+          end_date: document.getElementById('bpEndDate')?.value || '',
+          questions_per_run: Number(document.getElementById('bpPerRun')?.value || 1),
+        },
+      });
+      confirmBtn.disabled = false;
+      syncMode();
+      if (result.ok && result.data) {
+        toast(`تم إنشاء الجدول ${result.data.schedule_id} لـ ${result.data.queued} سؤالاً`);
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        toast(result.data?.error || result.error || 'فشل إنشاء الجدول', 'error');
+      }
+    }
+
+    confirmBtn?.addEventListener('click', async () => {
+      if (!pending.length) return;
+      if (!channelSelect?.value) { toast('اختر قناة أولاً.', 'warning'); return; }
+      const ids = approvedIds();
+      if (!ids.length) {
+        toast('لا توجد أسئلة معتمدة للنشر (كل الأسئلة المكررة غير محددة).', 'warning');
+        return;
+      }
+      if (canSchedule && modeSchedule?.checked) await createDedicated(ids);
+      else await publishNow(ids);
     });
 
     // Exposed so the bulk bar can open the modal with the current selection.
     initBulkPublish.open = () => {
       pending = selectedIds();
       if (!pending.length) { toast('لم يتم تحديد أي سؤال.', 'warning'); return; }
-      const list = document.getElementById('bpList');
+      duplicateIds = [];
       const count = document.getElementById('bpCount');
+      const list = document.getElementById('bpList');
       if (count) count.textContent = pending.length;
       if (progressWrap) progressWrap.classList.add('d-none');
       if (progressBar) progressBar.style.width = '0%';
-      if (scheduleSelect) scheduleSelect.value = '';
+      if (modeNow) modeNow.checked = true;
       if (list) {
         list.innerHTML = pending
-          .map((id) => {
-            const row = document.querySelector(`tr[data-question-id="${id}"] .q-text`);
-            const text = row ? row.textContent.trim().slice(0, 70) : '';
-            return `<li><code>${id}</code> ${text}</li>`;
-          })
+          .map((id) => `<li><code>${id}</code> ${questionText(id)}</li>`)
           .join('');
       }
-      syncSchedules();
-      refreshEstimate();
+      renderDuplicates();
       syncMode();
+      refreshEstimate();
       new bootstrap.Modal(modalEl).show();
+      loadDuplicates();
     };
   }
 
