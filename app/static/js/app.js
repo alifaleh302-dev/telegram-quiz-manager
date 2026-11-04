@@ -608,7 +608,25 @@ const TQM = (() => {
     if (!modalEl) return;
     const confirmBtn = document.getElementById('bpConfirm');
     const channelSelect = document.getElementById('bpChannel');
+    const progressWrap = document.getElementById('bpProgressWrap');
+    const progressBar = document.getElementById('bpProgress');
+    const estimateEl = document.getElementById('bpEstimate');
+    // Server-rendered pacing interval, so the estimate matches what will happen.
+    const interval = Number(modalEl.dataset.pacingInterval || 0);
     let pending = [];
+
+    function humanDuration(seconds) {
+      if (seconds < 60) return `${seconds} ثانية`;
+      const minutes = Math.floor(seconds / 60);
+      const rest = seconds % 60;
+      return rest ? `${minutes} دقيقة و${rest} ثانية` : `${minutes} دقيقة`;
+    }
+
+    function refreshEstimate() {
+      if (!estimateEl) return;
+      const seconds = Math.max(0, (pending.length - 1)) * interval;
+      estimateEl.textContent = humanDuration(seconds);
+    }
 
     confirmBtn?.addEventListener('click', async () => {
       if (!pending.length) return;
@@ -617,10 +635,23 @@ const TQM = (() => {
 
       confirmBtn.disabled = true;
       confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ النشر...';
+      if (progressWrap) progressWrap.classList.remove('d-none');
+      // The server sends one batch request, so advance the bar on a timer that
+      // matches the pacing interval — it is an estimate, not live progress.
+      let done = 0;
+      const timer = interval
+        ? setInterval(() => {
+            done = Math.min(done + 1, pending.length);
+            if (progressBar) progressBar.style.width = `${(done / pending.length) * 100}%`;
+          }, interval * 1000)
+        : null;
+
       const result = await api('/api/publishing/bulk', {
         method: 'POST',
         body: { question_ids: pending, channel_id: channelId },
       });
+      if (timer) clearInterval(timer);
+      if (progressBar) progressBar.style.width = '100%';
       confirmBtn.disabled = false;
       confirmBtn.innerHTML = '<i class="bi bi-send-fill"></i> نشر الآن';
 
@@ -645,6 +676,8 @@ const TQM = (() => {
       const list = document.getElementById('bpList');
       const count = document.getElementById('bpCount');
       if (count) count.textContent = pending.length;
+      if (progressWrap) progressWrap.classList.add('d-none');
+      if (progressBar) progressBar.style.width = '0%';
       if (list) {
         list.innerHTML = pending
           .map((id) => {
@@ -654,6 +687,7 @@ const TQM = (() => {
           })
           .join('');
       }
+      refreshEstimate();
       new bootstrap.Modal(modalEl).show();
     };
   }
@@ -979,6 +1013,10 @@ const TQM = (() => {
         retry: {
           max_attempts: Number(form.get('max_attempts') || 3),
           delay_seconds: Number(form.get('delay_seconds') || 60),
+        },
+        pacing: {
+          interval_seconds: Number(form.get('pacing_interval') || 0),
+          max_wait_seconds: Number(form.get('pacing_max_wait') || 0),
         },
         analytics: {
           auto_collect: form.get('analytics_auto_collect') === 'on',

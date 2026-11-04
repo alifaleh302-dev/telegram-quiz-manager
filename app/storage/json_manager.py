@@ -233,6 +233,10 @@ class Storage:
                     "allows_multiple_answers": False,
                 },
                 "retry": {"max_attempts": 3, "delay_seconds": 60},
+                # Spacing between questions in a burst (bulk publish / batch
+                # schedule). Telegram rate-limits a chat at roughly 20 messages
+                # per minute, so a burst with no gap silently fails partway.
+                "pacing": {"interval_seconds": 4, "max_wait_seconds": 120},
                 "daily_limit": 0,
                 "analytics": {"auto_collect": False, "auto_collect_hours": 6},
                 # Which transport new channels use by default: "bot" (Bot API)

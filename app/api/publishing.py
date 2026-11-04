@@ -137,8 +137,10 @@ async def bulk_publish(
 
     Each question is published sequentially through the same path as the single
     manual publish, so the pending-row claim and the audit trail behave the
-    same. One failure does not abort the rest; the caller gets a per-question
-    report.
+    same. Sends are spaced out by the configured pacing interval and Telegram
+    flood control is honoured, which is what keeps a 50-question burst from
+    being rate-limited partway. One failure does not abort the rest; the caller
+    gets a per-question report.
     """
     services = get_services(request)
 
@@ -149,34 +151,10 @@ async def bulk_publish(
     if not payload.channel_id:
         raise ValidationError("يجب اختيار القناة المستهدفة.")
 
-    results: list[dict[str, Any]] = []
-    succeeded = 0
-    for question_id in ids:
-        try:
-            entry = await services.publishing.publish(
-                question_id,
-                payload.channel_id,
-                trigger="manual",
-                actor=session.username,
-                respect_pause=False,
-                allow_repeat=True,
-            )
-        except ValidationError as exc:
-            results.append(
-                {"question_id": question_id, "status": "failed", "error": str(exc)}
-            )
-            continue
-        ok = entry["status"] == "success"
-        succeeded += 1 if ok else 0
-        results.append(
-            {
-                "question_id": question_id,
-                "status": entry["status"],
-                "entry_id": entry["id"],
-                "error": entry.get("error") or "",
-            }
-        )
-
+    results = await services.publishing.publish_many(
+        ids, payload.channel_id, actor=session.username
+    )
+    succeeded = sum(1 for row in results if row["status"] == "success")
     failed = len(results) - succeeded
     return {
         "ok": failed == 0,

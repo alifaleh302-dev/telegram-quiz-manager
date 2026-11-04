@@ -61,6 +61,7 @@ async def questions_page(
     questions = services.questions.list_questions(
         search=search, category=category, status=status, difficulty=difficulty
     )
+    pacing_interval, _ = services.publishing.pacing()
     return render(
         request,
         "questions.html",
@@ -69,6 +70,7 @@ async def questions_page(
             "categories": services.questions.categories(),
             "stats": services.questions.stats(),
             "channels": services.channels.list_channels(),
+            "pacing_interval": pacing_interval,
             "filters": {
                 "search": search,
                 "category": category,

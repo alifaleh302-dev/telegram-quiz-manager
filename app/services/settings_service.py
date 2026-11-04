@@ -17,6 +17,7 @@ _EDITABLE_KEYS = {
     "publishing_enabled",
     "poll_options",
     "retry",
+    "pacing",
     "daily_limit",
     "analytics",
     "transport",
@@ -43,6 +44,15 @@ class SettingsService:
                     document["retry"] = {
                         "max_attempts": int(value.get("max_attempts", 3)),
                         "delay_seconds": int(value.get("delay_seconds", 60)),
+                    }
+                elif key == "pacing":
+                    interval = int(value.get("interval_seconds", 4))
+                    max_wait = int(value.get("max_wait_seconds", 120))
+                    if interval < 0 or max_wait < 0:
+                        raise ValidationError("قيم التباعد الزمني لا يمكن أن تكون سالبة.")
+                    document["pacing"] = {
+                        "interval_seconds": interval,
+                        "max_wait_seconds": max_wait,
                     }
                 elif key == "poll_options":
                     document["poll_options"] = {

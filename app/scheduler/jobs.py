@@ -119,7 +119,11 @@ class ScheduleRunner:
             return {"ok": False, "reason": "global-daily-limit"}
 
         batch_size = max(1, int(schedule.get("questions_per_run") or 1))
+        # A schedule's own gap wins; otherwise fall back to the global pacing
+        # interval so a batch never fires back-to-back and hits the rate limit.
         gap = max(0, int(schedule.get("batch_interval_seconds") or 0))
+        if not gap and batch_size > 1:
+            gap, _ = self._publishing.pacing()
 
         # A single run must not exceed the schedule's daily allowance.
         remaining = per_day - self._published_today(schedule) if per_day else batch_size

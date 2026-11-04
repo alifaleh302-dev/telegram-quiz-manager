@@ -150,7 +150,7 @@
 
   {% if 'questions' in permissions and 'publish' in permissions %}
   <!-- Bulk publish: send every selected question to one channel -->
-  <div class="modal fade" id="bulkPublishModal" tabindex="-1">
+  <div class="modal fade" id="bulkPublishModal" tabindex="-1" data-pacing-interval="{{ pacing_interval }}">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
@@ -176,9 +176,20 @@
             <div class="form-text text-warning">لا توجد قنوات بعد. أضف قناة من صفحة القنوات أولاً.</div>
             {% endif %}
           </div>
-          <div class="alert alert-warning small py-2 mb-0">
+          <div class="alert alert-warning small py-2 mb-3">
             <i class="bi bi-exclamation-triangle"></i>
             تُرسل الأسئلة المحددة بالتتابع إلى القناة المختارة. النشر اليدوي يتجاوز منع التكرار.
+          </div>
+          <div class="alert alert-info small py-2 mb-3">
+            <i class="bi bi-hourglass-split"></i>
+            التباعد بين الأسئلة: <strong>{{ pacing_interval }}</strong> ثانية.
+            تيليجرام يحدّ سرعة الإرسال لكل قناة، لذلك النشر الجماعي يأخذ وقتاً؛
+            لا تغلق الصفحة أثناء النشر.
+            <div class="mt-1">الوقت المتوقع للدفعة: <strong id="bpEstimate">—</strong></div>
+          </div>
+          <div class="progress d-none" id="bpProgressWrap" style="height: 8px;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated"
+                 id="bpProgress" role="progressbar" style="width: 0%"></div>
           </div>
         </div>
         <div class="modal-footer">

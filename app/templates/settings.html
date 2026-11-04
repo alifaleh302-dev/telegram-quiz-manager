@@ -132,6 +132,27 @@
           </div>
         </div>
         <hr class="my-4">
+        <h3 class="h6"><i class="bi bi-hourglass-split"></i> التباعد بين الأسئلة (سياسة تيليجرام)</h3>
+        <p class="hint mb-3">
+          تيليجرام يحدّ من سرعة الإرسال لكل قناة (حوالي 20 رسالة في الدقيقة). عند نشر
+          عدة أسئلة دفعة واحدة يُترك فاصل زمني بين كل سؤال والذي يليه، وإذا طلب
+          تيليجرام الانتظار ينتظر النظام المدة المطلوبة ثم يعيد المحاولة.
+        </p>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">الفاصل بين الأسئلة (ثانية)</label>
+            <input class="form-control" type="number" name="pacing_interval" min="0" max="3600"
+                   value="{{ config.pacing.interval_seconds if config.pacing else 4 }}">
+            <div class="form-text">0 = بدون فاصل (غير مُستحسن للنشر الجماعي).</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">أقصى انتظار عند الحظر (ثانية)</label>
+            <input class="form-control" type="number" name="pacing_max_wait" min="0" max="3600"
+                   value="{{ config.pacing.max_wait_seconds if config.pacing else 120 }}">
+            <div class="form-text">إذا طلب تيليجرام انتظاراً أطول من ذلك يُسجَّل السؤال كفشل بدل التعليق.</div>
+          </div>
+        </div>
+        <hr class="my-4">
         <h3 class="h6"><i class="bi bi-bar-chart-line"></i> إحصائيات التفاعل</h3>
         <div class="form-check form-switch mb-2">
           <input class="form-check-input" type="checkbox" name="analytics_auto_collect"

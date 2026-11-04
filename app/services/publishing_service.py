@@ -8,11 +8,15 @@ Guarantees implemented here:
 * Two publishes for the same question+channel cannot run at the same time.
 * On startup, ``pending`` rows that are too old are marked ``unknown`` and
   surfaced in the dashboard for manual review instead of being retried blindly.
+* Sends are *paced* and Telegram flood control is honoured: a burst of manual
+  publishes used to hit the per-chat rate limit and silently drop everything
+  past ~20 messages.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,10 +34,17 @@ logger = get_logger(__name__)
 # A pending row older than this is treated as "we do not know the outcome".
 PENDING_TIMEOUT = timedelta(minutes=10)
 
+# A single question may be re-sent after a flood wait at most this many times
+# before we give up and log it, so one stubborn question cannot stall a batch.
+MAX_FLOOD_RETRIES = 2
+
 STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
 STATUS_PENDING = "pending"
 STATUS_UNKNOWN = "unknown"
+
+# Injected in tests so pacing/flood waits do not actually sleep.
+Sleeper = Callable[[float], Awaitable[None]]
 
 
 class PublishingService:
@@ -45,6 +56,8 @@ class PublishingService:
         channels: ChannelService,
         settings_service: SettingsService,
         client: TelegramClient,
+        *,
+        sleep: Sleeper = asyncio.sleep,
     ) -> None:
         self._storage = storage
         self._audit = audit
@@ -53,6 +66,7 @@ class PublishingService:
         self._settings = settings_service
         self._client = client
         self._lock = asyncio.Lock()
+        self._sleep = sleep
 
     # --- history -----------------------------------------------------------
     def history(self, limit: int = 100, status: str = "") -> list[dict[str, Any]]:
@@ -164,6 +178,75 @@ class PublishingService:
         )
 
     # --- publishing --------------------------------------------------------
+    def pacing(self) -> tuple[int, int]:
+        """``(interval_seconds, max_wait_seconds)`` for a burst of publishes."""
+        config = self._settings.get().get("pacing") or {}
+        interval = max(0, int(config.get("interval_seconds", 4)))
+        max_wait = max(0, int(config.get("max_wait_seconds", 120)))
+        return interval, max_wait
+
+    async def _send_with_flood_retry(
+        self,
+        chat_id: str,
+        question: dict[str, Any],
+        options: dict[str, Any],
+        *,
+        channel_id: str,
+        max_wait: int,
+    ) -> PublishResult:
+        """Send one quiz, honouring Telegram's flood wait and retrying.
+
+        A rate-limit error is safe to retry (Telegram did not post anything), so
+        we wait the requested number of seconds and try again, up to
+        ``MAX_FLOOD_RETRIES`` times. Without this, every question past the
+        per-chat limit failed outright — the bug that dropped 35 of 55 sends.
+        """
+        for attempt in range(MAX_FLOOD_RETRIES + 1):
+            result = await self._client.send_quiz(
+                chat_id,
+                question,
+                explanation=bool(options.get("explanation", True)),
+                open_period=int(options.get("open_period", 0)),
+                anonymous=bool(options.get("anonymous", True)),
+                channel_id=channel_id,
+            )
+            if result.ok or not result.flood_wait:
+                return result
+            if attempt >= MAX_FLOOD_RETRIES:
+                return result
+
+            wait = result.retry_after
+            if wait is None:
+                wait, _ = self.pacing()
+            # Cap the wait so a long ban cannot hang the request indefinitely;
+            # when capped we log and move on instead of retrying immediately.
+            if max_wait and wait > max_wait:
+                logger.warning(
+                    "flood wait of %ss exceeds the %ss cap for %s; not retrying",
+                    wait,
+                    max_wait,
+                    question.get("id", "?"),
+                )
+                return result
+            logger.info(
+                "flood control: waiting %ss before retrying %s (attempt %s)",
+                wait,
+                question.get("id", "?"),
+                attempt + 1,
+            )
+            self._audit.record(
+                "publishing.flood_wait",
+                level="warning",
+                message=(
+                    f"تيليجرام طلب الانتظار {wait} ثانية قبل نشر "
+                    f"{question.get('id', '?')}؛ سيُعاد المحاولة."
+                ),
+                question_id=question.get("id", ""),
+                channel_id=channel_id,
+            )
+            await self._sleep(wait)
+        return result  # pragma: no cover - loop always returns
+
     async def publish(
         self,
         question_id: str,
@@ -189,19 +272,19 @@ class PublishingService:
             raise ValidationError(f"القناة {channel['name']} معطّلة.")
 
         options = self._settings.get().get("poll_options", {})
+        _, max_wait = self.pacing()
 
         # The lock serialises attempts so two schedules cannot publish at once.
         async with self._lock:
             entry = self._claim(
                 question_id, channel_id, schedule_id, trigger, allow_repeat=allow_repeat
             )
-            result: PublishResult = await self._client.send_quiz(
+            result = await self._send_with_flood_retry(
                 channel["chat_id"],
                 question,
-                explanation=bool(options.get("explanation", True)),
-                open_period=int(options.get("open_period", 0)),
-                anonymous=bool(options.get("anonymous", True)),
+                options,
                 channel_id=channel_id,
+                max_wait=max_wait,
             )
 
             if result.ok:
@@ -255,6 +338,53 @@ class PublishingService:
                 )
             return final
 
+    async def publish_many(
+        self,
+        question_ids: list[str],
+        channel_id: str,
+        *,
+        actor: str = "system",
+        trigger: str = "manual",
+        interval_seconds: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Publish several questions to one channel, spaced out to respect limits.
+
+        A per-question failure is recorded and does not abort the batch, and the
+        caller gets one result row per question in the original order. Pacing is
+        what makes a 50-question burst safe: without it Telegram rate-limits the
+        channel after roughly 20 messages in a minute.
+        """
+        interval, _ = self.pacing()
+        if interval_seconds is not None:
+            interval = max(0, int(interval_seconds))
+
+        results: list[dict[str, Any]] = []
+        for index, question_id in enumerate(question_ids):
+            if index and interval:
+                await self._sleep(interval)
+            try:
+                entry = await self.publish(
+                    question_id,
+                    channel_id,
+                    trigger=trigger,
+                    actor=actor,
+                    respect_pause=False,
+                    allow_repeat=True,
+                )
+                results.append(
+                    {
+                        "question_id": question_id,
+                        "status": entry["status"],
+                        "entry_id": entry["id"],
+                        "error": entry.get("error") or "",
+                    }
+                )
+            except ValidationError as exc:
+                results.append(
+                    {"question_id": question_id, "status": STATUS_FAILED, "error": str(exc)}
+                )
+        return results
+
     async def retry(self, entry_id: str, *, actor: str = "system") -> dict[str, Any]:
         """Retry a previously failed publish using its original target."""
         entries = {e["id"]: e for e in self._storage.history.read()["history"]}
@@ -272,14 +402,14 @@ class PublishingService:
             raise ValidationError("السؤال أو القناة المرتبطة بهذه العملية لم تعد موجودة.")
 
         options = self._settings.get().get("poll_options", {})
+        _, max_wait = self.pacing()
         async with self._lock:
-            result = await self._client.send_quiz(
+            result = await self._send_with_flood_retry(
                 channel["chat_id"],
                 question,
-                explanation=bool(options.get("explanation", True)),
-                open_period=int(options.get("open_period", 0)),
-                anonymous=bool(options.get("anonymous", True)),
+                options,
                 channel_id=entry["channel_id"],
+                max_wait=max_wait,
             )
             if result.ok:
                 final = self._finish(

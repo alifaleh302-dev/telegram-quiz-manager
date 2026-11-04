@@ -21,7 +21,11 @@ import asyncio
 from typing import Any
 
 from app.core.logging import get_logger
-from app.telegram.telegram_client import PollSnapshot, PublishResult
+from app.telegram.telegram_client import (
+    PollSnapshot,
+    PublishResult,
+    retry_after_seconds,
+)
 
 logger = get_logger(__name__)
 
@@ -315,4 +319,10 @@ class UserbotClient:
             hint in text.lower() for hint in ("timed out", "timeout", "connection", "reset")
         ):
             retryable = True
-        return PublishResult(ok=False, error=text, error_code=name, retryable=retryable)
+        return PublishResult(
+            ok=False,
+            error=text,
+            error_code=name,
+            retryable=retryable,
+            retry_after=retry_after_seconds(exc),
+        )

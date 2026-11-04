@@ -29,21 +29,28 @@ class FakeTelegramClient:
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        # ``fail_with`` fails every send; ``transient_failure`` fails the next
+        # ``fail_times`` sends then succeeds (used by the flood-retry tests).
         self.fail_with: Exception | None = None
+        self.transient_failure: Exception | None = None
+        self.fail_times = 0
         self.next_message_id = 1000
         self.dry_run = False
         # ``{message_id: snapshot}`` the fake returns from ``fetch_poll_results``.
         self.poll_snapshots: dict[int, Any] = {}
         self.member_counts: dict[str, int] = {}
         self.fetch_error: Exception | None = None
+        self.attempts = 0
 
     async def send_quiz(
         self, chat_id, question, *, explanation=True, open_period=0, anonymous=True, channel_id=""
     ):
+        self.attempts += 1
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            return self._failure(self.transient_failure)
         if self.fail_with is not None:
-            from app.telegram.telegram_client import TelegramClient
-
-            return TelegramClient._classify(self.fail_with)
+            return self._failure(self.fail_with)
         self.next_message_id += 1
         self.sent.append(
             {
@@ -58,6 +65,11 @@ class FakeTelegramClient:
             message_id=self.next_message_id,
             poll_id=f"poll-{self.next_message_id}",
         )
+
+    def _failure(self, exc: Exception | None):
+        from app.telegram.telegram_client import TelegramClient
+
+        return TelegramClient._classify(exc if exc is not None else RuntimeError("fake failure"))
 
     async def fetch_poll_results(self, chat_id, message_id):
         from app.telegram.telegram_client import PollSnapshot
@@ -89,6 +101,30 @@ class FakeTelegramClient:
         return None
 
 
+class RecordingSleeper:
+    """Captures pacing/flood waits instead of really sleeping.
+
+    Publishing is paced in production, so without this every burst test would
+    spend real seconds in ``asyncio.sleep``. Tests assert on ``waits`` when the
+    duration matters.
+    """
+
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+
+    @property
+    def total(self) -> float:
+        return sum(self.waits)
+
+
+@pytest.fixture
+def fake_sleeper() -> RecordingSleeper:
+    return RecordingSleeper()
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     config = Settings(
@@ -109,12 +145,16 @@ def fake_telegram() -> FakeTelegramClient:
 
 
 @pytest.fixture
-def services(settings: Settings, fake_telegram: FakeTelegramClient) -> Services:
+def services(
+    settings: Settings, fake_telegram: FakeTelegramClient, fake_sleeper: RecordingSleeper
+) -> Services:
     built = build_services(settings)
     # Swap the network transport for the fake, keeping every other service real.
     # Publishing goes through the transport router, so we replace the router's
     # *bot* leg (userbot channels are faked per-test where needed).
     built.telegram._bot = fake_telegram  # noqa: SLF001
+    # Pacing waits are recorded, not slept, so burst tests stay fast.
+    built.publishing._sleep = fake_sleeper  # noqa: SLF001
     return built
 
 

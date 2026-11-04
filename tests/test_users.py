@@ -35,6 +35,10 @@ def app_client(tmp_path: Path, monkeypatch):
 
     application = create_app()
     with TestClient(application) as client:
+        # Pacing waits are recorded, not slept, so burst tests stay fast.
+        from tests.conftest import RecordingSleeper
+
+        application.state.services.publishing._sleep = RecordingSleeper()
         yield client
     get_settings.cache_clear()
 
@@ -475,6 +479,34 @@ def test_bulk_publish_deduplicates_and_reports_failures(app_client) -> None:
     assert body["ok"] is False
     failed = next(r for r in body["results"] if r["status"] != "success")
     assert failed["question_id"] == "Q9999"
+
+
+def test_bulk_publish_paces_sends_and_reports_all(app_client) -> None:
+    """A multi-question burst must be spaced out, not fired back-to-back."""
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    ids = [_make_question(app_client, headers, f"Q{i}?")["id"] for i in range(5)]
+
+    sleeper = app_client.app.state.services.publishing._sleep  # noqa: SLF001
+
+    response = app_client.post(
+        "/api/publishing/bulk",
+        json={"question_ids": ids, "channel_id": channel["id"]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["succeeded"] == 5
+    # Default interval is 4s, applied between consecutive questions only.
+    assert sleeper.waits == [4, 4, 4, 4]
+
+
+def test_bulk_publish_modal_shows_pacing_interval(app_client) -> None:
+    _login(app_client)
+    page = app_client.get("/questions")
+    assert page.status_code == 200
+    assert 'data-pacing-interval="4"' in page.text
+    assert "bpEstimate" in page.text
 
 
 def test_bulk_publish_validates_input(app_client) -> None:

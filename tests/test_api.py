@@ -35,6 +35,10 @@ def app_client(tmp_path: Path, monkeypatch):
 
     application = create_app()
     with TestClient(application) as client:
+        # Pacing waits are recorded, not slept, so burst tests stay fast.
+        from tests.conftest import RecordingSleeper
+
+        application.state.services.publishing._sleep = RecordingSleeper()
         yield client
     get_settings.cache_clear()
 
@@ -390,6 +394,29 @@ def test_unknown_setting_key_rejected(app_client) -> None:
     response = app_client.put(
         "/api/settings",
         json={"secret_backdoor": "x"},
+        headers={"X-CSRF-Token": _csrf(app_client)},
+    )
+    assert response.status_code == 400
+
+
+def test_pacing_settings_roundtrip(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    updated = app_client.put(
+        "/api/settings",
+        json={"pacing": {"interval_seconds": 8, "max_wait_seconds": 90}},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["pacing"] == {"interval_seconds": 8, "max_wait_seconds": 90}
+    assert app_client.get("/api/settings").json()["pacing"]["interval_seconds"] == 8
+
+
+def test_negative_pacing_rejected(app_client) -> None:
+    _login(app_client)
+    response = app_client.put(
+        "/api/settings",
+        json={"pacing": {"interval_seconds": -3, "max_wait_seconds": 10}},
         headers={"X-CSRF-Token": _csrf(app_client)},
     )
     assert response.status_code == 400

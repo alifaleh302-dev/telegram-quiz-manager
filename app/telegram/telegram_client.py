@@ -8,7 +8,9 @@ the services so the transport can be swapped or faked in tests.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import get_settings
@@ -19,8 +21,32 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = get_logger(__name__)
 
+# "Flood control exceeded. Retry in 32 seconds" — the number Telegram reports is
+# the only reliable source; the exception attribute names differ between the Bot
+# API and the MTProto forks, so the message is parsed as the fallback.
+_RETRY_IN_RE = re.compile(r"retry in (\d+)", re.IGNORECASE)
+
+
+def retry_after_seconds(exc: Exception) -> int | None:
+    """Extract Telegram's requested wait, or ``None`` when it is not a rate limit."""
+    value = getattr(exc, "retry_after", None)
+    if isinstance(value, timedelta):
+        return max(0, int(value.total_seconds()))
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    # Pyrogram's FloodWait carries the seconds in ``value``.
+    seconds = getattr(exc, "value", None) or getattr(exc, "seconds", None)
+    if isinstance(seconds, (int, float)):
+        return max(0, int(seconds))
+    match = _RETRY_IN_RE.search(str(exc))
+    return int(match.group(1)) if match else None
+
+
 # Errors that are worth retrying: network hiccups and Telegram being busy.
 _RETRYABLE = {"TimedOut", "NetworkError", "RetryAfter", "FloodWait"}
+# Rate-limit errors: Telegram tells us how long to wait, and the wait must be
+# honoured rather than retried immediately (that only extends the ban).
+_RATE_LIMIT = {"RetryAfter", "FloodWait"}
 # A subset where the request may already have been applied on Telegram's side:
 # the outcome is unknown, so a blind retry risks a duplicate post.
 _AMBIGUOUS = {"TimedOut", "NetworkError"}
@@ -44,10 +70,18 @@ class PublishResult:
     retryable: bool = False
     dry_run: bool = False
     poll_id: str | None = None
+    # Seconds Telegram asked us to wait before retrying (flood control). ``None``
+    # means "not a rate limit", so the caller can tell it apart from a wait of 0.
+    retry_after: int | None = None
 
     @property
     def status(self) -> str:
         return "success" if self.ok else "failed"
+
+    @property
+    def flood_wait(self) -> bool:
+        """True when the failure is Telegram throttling us."""
+        return self.error_code in _RATE_LIMIT
 
     @property
     def ambiguous(self) -> bool:
@@ -261,4 +295,5 @@ class TelegramClient:
             error=text,
             error_code=name,
             retryable=retryable,
+            retry_after=retry_after_seconds(exc),
         )

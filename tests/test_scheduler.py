@@ -137,6 +137,38 @@ async def test_runner_waits_between_batch_questions(services, monkeypatch) -> No
     assert slept == [4]
 
 
+async def test_runner_falls_back_to_global_pacing_for_batches(services, monkeypatch) -> None:
+    """A batch schedule with no gap of its own must still be paced."""
+    _make_ready(services, 3)
+    services.app_settings.update({"pacing": {"interval_seconds": 6, "max_wait_seconds": 120}})
+    schedule = _schedule(services, questions_per_run=3)
+
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.scheduler.jobs.asyncio.sleep", _fake_sleep)
+    await services.runner.run(schedule["id"])
+
+    assert slept == [6, 6]
+
+
+async def test_runner_single_question_does_not_wait(services, monkeypatch) -> None:
+    _make_ready(services, 3)
+    schedule = _schedule(services, questions_per_run=1)
+
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.scheduler.jobs.asyncio.sleep", _fake_sleep)
+    await services.runner.run(schedule["id"])
+
+    assert slept == []
+
+
 async def test_runner_batch_does_not_exceed_daily_limit(services, fake_telegram) -> None:
     _make_ready(services, 5)
     schedule = _schedule(services, questions_per_run=3, questions_per_day=2)
