@@ -29,6 +29,9 @@ class BulkAction(BaseModel):
     ids: list[str]
     action: str
     status: str | None = None
+    # Bulk delete is destructive and irreversible from the UI; require an explicit
+    # acknowledgement so a stray click can never empty the bank.
+    confirm: bool = False
 
 
 class ImportPayload(BaseModel):
@@ -176,6 +179,10 @@ async def bulk_questions(
 ) -> dict[str, Any]:
     services = get_services(request)
     if payload.action == "delete":
+        if not payload.confirm:
+            raise ValidationError(
+                "تأكيد الحذف الجماعي مطلوب. حدّد الأسئلة ثم أكّد الحذف."
+            )
         count = services.questions.bulk_delete(payload.ids, actor=session.username)
     elif payload.action == "set_status":
         if not payload.status:

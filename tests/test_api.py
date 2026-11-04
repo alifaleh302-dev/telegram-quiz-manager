@@ -188,6 +188,41 @@ def test_questions_export_returns_document(app_client) -> None:
     assert response.json()["version"] == 1
 
 
+def test_bulk_delete_requires_explicit_confirmation(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    ids = [
+        app_client.post(
+            "/api/questions",
+            json={
+                "question": f"Question {n}",
+                "options": ["A", "B"],
+                "correct_option_id": 0,
+                "status": "ready",
+            },
+            headers=headers,
+        ).json()["id"]
+        for n in (1, 2)
+    ]
+
+    unconfirmed = app_client.post(
+        "/api/questions/bulk",
+        json={"ids": ids, "action": "delete"},
+        headers=headers,
+    )
+    assert unconfirmed.status_code == 400
+    assert len(app_client.get("/api/questions").json()["questions"]) == 2
+
+    confirmed = app_client.post(
+        "/api/questions/bulk",
+        json={"ids": ids, "action": "delete", "confirm": True},
+        headers=headers,
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["affected"] == 2
+    assert app_client.get("/api/questions").json()["questions"] == []
+
+
 # --- channels, schedules, publishing --------------------------------------
 
 def test_channel_creation_and_listing(app_client) -> None:

@@ -76,8 +76,9 @@ app/
 
 data/      # questions / channels / schedules / publishing_history / poll_results / poll_answers / settings / users / secrets / audit_log
 logs/      # app.log
-tests/     # 136 اختباراً
+tests/     # 139 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
+examples/  # questions.sample.json (نموذج استيراد)
 ```
 
 **لماذا JSON؟** لتفادي قاعدة بيانات ثقيلة على سيرفر صغير. الطبقة معزولة داخل
@@ -158,7 +159,7 @@ tools/     # smoke_test.sh · telegram_check.py
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 136 اختباراً
+python -m pytest              # 139 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
@@ -191,6 +192,87 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
 الملفان `data/poll_results.json` و`data/poll_answers.json` يحفظان إحصاءات
 التفاعل: الأول صف لكل استطلاع (أحدث قراءة للأعداد)، والثاني إجابة كل عضو
 عندما يكون الاستطلاع غير مجهول.
+
+---
+
+## 8.1 صيغة ملف استيراد الأسئلة (JSON)
+
+من صفحة **بنك الأسئلة → استيراد JSON** يمكنك رفع ملف، ويقبل النظام صيغتين:
+
+1. **كائن فيه مفتاح `questions`** (المستحسن — نفس صيغة التصدير).
+2. **قائمة أسئلة مباشرة** `[ {...}, {...} ]`.
+
+### الحقول
+
+| الحقل | مطلوب | الوصف | القيود |
+| --- | --- | --- | --- |
+| `question` | نعم | نص السؤال | 300 حرف كحد أقصى |
+| `options` | نعم | قائمة الخيارات | بين 2 و10، بلا تكرار |
+| `correct_option_id` | نعم | رقم الإجابة الصحيحة | يبدأ من **0** (أول خيار = 0) |
+| `explanation` | لا | الشرح الذي يظهر بعد الإجابة | 500 حرف |
+| `category` | لا | التصنيف | الافتراضي `General` |
+| `difficulty` | لا | الصعوبة | `easy` · `medium` · `hard` (الافتراضي `medium`) |
+| `status` | لا | الحالة | `draft` · `ready` · `published` (الافتراضي `draft`) |
+
+> لا تُدرج `id` أو `created_at` — يولّدهما النظام تلقائياً. وأي سؤال بحالة
+> `ready` يصبح متاحاً للنشر مباشرةً من الجدولة.
+
+### الخيارات: صيغتان مقبولتان
+
+```json
+// (أ) نصوص مع رقم الإجابة الصحيحة
+"options": ["HTTP", "DNS", "FTP", "SSH"],
+"correct_option_id": 1,
+
+// (ب) كائنات مع علامة على الخيار الصحيح
+"options": [
+  {"text": "DNS", "is_correct": true},
+  {"text": "HTTP"},
+  {"text": "FTP"}
+]
+```
+
+### ملف كامل (انسخه وعدّله)
+
+```json
+{
+  "version": 1,
+  "questions": [
+    {
+      "question": "ما المنفذ الافتراضي لبروتوكول SSH؟",
+      "options": ["21", "22", "23", "25"],
+      "correct_option_id": 1,
+      "explanation": "SSH يعمل افتراضياً على المنفذ 22.",
+      "category": "Networking",
+      "difficulty": "easy",
+      "status": "ready"
+    }
+  ]
+}
+```
+
+يوجد ملف جاهز في `examples/questions.sample.json`.
+
+### سياسة التكرار
+
+يُكتشف السؤال المكرر بمطابقة **نص السؤال** (دون حساسية لحالة الأحرف). اختر:
+
+- `skip` (الافتراضي): تجاهل المكرر.
+- `update`: حدّث السؤال الموجود.
+- `create`: أضف نسخة جديدة دائماً.
+
+### الاستيراد عبر API
+
+```bash
+curl -X POST http://localhost:8000/api/questions/import-file \
+  -H "X-CSRF-Token: $CSRF" -b "tqm_session=$SESSION" \
+  -F "file=@examples/questions.sample.json" -F "duplicate_policy=skip"
+```
+
+### ماذا يحدث للأسئلة الخاطئة؟
+
+الأسئلة الصحيحة تُستورد، والخاطئة **لا توقف** العملية؛ يعيد التقرير عدد
+`imported` و`updated` و`skipped` و`failed` مع أول 20 خطأ وسبب كل خطأ.
 
 ---
 

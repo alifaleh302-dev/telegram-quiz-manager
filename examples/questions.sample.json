@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "questions": [
+    {
+      "question": "ما المنفذ الافتراضي لبروتوكول Telnet؟",
+      "options": ["20", "21", "22", "23"],
+      "correct_option_id": 3,
+      "explanation": "Telnet يعمل افتراضياً على المنفذ 23، وهو بروتوكول غير مشفَّر.",
+      "category": "Networking",
+      "difficulty": "easy",
+      "status": "ready"
+    },
+    {
+      "question": "ما وحدة قياس سرعة نقل البيانات في الشبكات؟",
+      "options": [
+        {"text": "بت/ثانية (bps)", "is_correct": true},
+        {"text": "بايت/ساعة"},
+        {"text": "هرتز"}
+      ],
+      "explanation": "تُقاس سرعة النقل عادةً بالبت في الثانية (bps).",
+      "category": "Networking",
+      "difficulty": "medium",
+      "status": "ready"
+    }
+  ]
+}

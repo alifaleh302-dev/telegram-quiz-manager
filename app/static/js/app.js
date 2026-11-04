@@ -125,10 +125,23 @@ const TQM = (() => {
   async function bulk(action, status) {
     const ids = selectedIds();
     if (!ids.length) { toast('لم يتم تحديد أي سؤال.', 'warning'); return; }
-    if (action === 'delete' && !confirm(`حذف ${ids.length} سؤالاً؟`)) return;
+    if (action === 'delete') {
+      const all = document.querySelectorAll('.row-check').length;
+      if (ids.length === all && all > 1) {
+        // Deleting the whole bank is the one action that cannot be undone from the
+        // UI; make it a deliberate, typed confirmation.
+        const typed = prompt(
+          `أنت على وشك حذف كل الأسئلة (${ids.length}).\nاكتب «حذف» للمتابعة:`
+        );
+        if (typed === null) return;
+        if (typed.trim() !== 'حذف') { toast('أُلغيت العملية.', 'warning'); return; }
+      } else if (!confirm(`حذف ${ids.length} سؤالاً؟`)) {
+        return;
+      }
+    }
     const result = await api('/api/questions/bulk', {
       method: 'POST',
-      body: { ids, action, status },
+      body: { ids, action, status, confirm: action === 'delete' },
     });
     if (result.ok) {
       toast(`تم تنفيذ الإجراء على ${result.data.affected} سؤالاً`);
