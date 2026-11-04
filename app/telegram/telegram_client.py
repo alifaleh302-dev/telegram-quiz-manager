@@ -70,6 +70,7 @@ class PollSnapshot:
     total_voters: int = 0
     options: list[dict[str, Any]] = field(default_factory=list)
     correct_option_ids: list[int] = field(default_factory=list)
+    explanation: str = ""
     error: str | None = None
     error_code: str | None = None
 
@@ -206,6 +207,7 @@ class TelegramClient:
                 total_voters=int(poll.total_voter_count),
                 options=options,
                 correct_option_ids=list(poll.correct_option_ids or []),
+                explanation=poll.explanation or "",
             )
         except Exception as exc:  # noqa: BLE001
             return PollSnapshot(ok=False, error=str(exc), error_code=type(exc).__name__)

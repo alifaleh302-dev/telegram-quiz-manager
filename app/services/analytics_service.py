@@ -61,6 +61,9 @@ class AnalyticsService:
             for option in snapshot.options
         ]
         correct = [int(i) for i in (snapshot.correct_option_ids or [])]
+        # The explanation as Telegram actually sent it — kept so the dashboard can
+        # show what subscribers saw, even if the question is edited later.
+        explanation = (getattr(snapshot, "explanation", "") or "").strip()
         if not correct:
             question = self._questions.get(question_id) or {}
             if question.get("correct_option_id") is not None:
@@ -78,6 +81,7 @@ class AnalyticsService:
                             "total_voters": int(snapshot.total_voters),
                             "options": options,
                             "correct_option_ids": correct,
+                            "explanation": explanation,
                             "collected_at": now,
                             "trigger": trigger,
                         }
@@ -94,6 +98,7 @@ class AnalyticsService:
                 "total_voters": int(snapshot.total_voters),
                 "options": options,
                 "correct_option_ids": correct,
+                "explanation": explanation,
                 "first_collected_at": now,
                 "collected_at": now,
                 "trigger": trigger,
@@ -286,6 +291,13 @@ class AnalyticsService:
                     "poll_id": poll["poll_id"],
                     "question_id": poll["question_id"],
                     "question_text": question.get("question", poll["question_id"]),
+                    # Prefer the text Telegram actually delivered; fall back to the
+                    # current question text for rows collected before it was stored.
+                    "explanation": (
+                        (snapshot or {}).get("explanation")
+                        or question.get("explanation")
+                        or ""
+                    ),
                     "category": question.get("category", ""),
                     "difficulty": question.get("difficulty", ""),
                     "channel_id": poll["channel_id"],

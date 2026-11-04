@@ -614,6 +614,12 @@ const TQM = (() => {
         ${p.channel_name} · <code>${p.question_id}</code> · رسالة ${p.message_id} ·
         ${p.votes} مصوّت · مشاركة ${p.participation_pct ?? '—'}%
       </p>`;
+    if (p.explanation) {
+      html += `<div class="poll-explanation mb-3">
+        <span class="label"><i class="bi bi-info-circle"></i> شرح الإجابة (كما ظهر في Telegram)</span>
+        <p class="mb-0">${p.explanation}</p>
+      </div>`;
+    }
     if (p.options.length) {
       html += '<ul class="poll-breakdown">';
       p.options.forEach((o) => {

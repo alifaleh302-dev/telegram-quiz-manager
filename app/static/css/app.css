@@ -311,4 +311,13 @@ code { color: #a5b4fc; background: rgba(99, 102, 241, .1); padding: 1px 6px; bor
 .opt-bar i { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
 .poll-breakdown li.correct .opt-bar i { background: var(--success); }
 .opt-num { color: var(--text-muted); font-size: .82rem; white-space: nowrap; }
+.poll-explanation {
+  border-inline-start: 3px solid var(--accent);
+  background: rgba(148, 163, 184, .08);
+  border-radius: 8px; padding: 10px 12px; font-size: .9rem;
+}
+.poll-explanation .label {
+  display: block; margin-bottom: 4px; color: var(--text-muted); font-size: .78rem;
+}
+.poll-explanation .label i { color: var(--accent); }
 

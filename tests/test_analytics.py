@@ -12,7 +12,7 @@ def channel(services):
     return services.channels.create({"name": "Main", "chat_id": "@main_channel"})
 
 
-def _snapshot(message_id, counts, *, correct=1, closed=True):
+def _snapshot(message_id, counts, *, correct=1, closed=True, explanation=""):
     return PollSnapshot(
         ok=True,
         poll_id=f"poll-{message_id}",
@@ -23,6 +23,7 @@ def _snapshot(message_id, counts, *, correct=1, closed=True):
             for i, count in enumerate(counts)
         ],
         correct_option_ids=[correct],
+        explanation=explanation,
     )
 
 
@@ -291,3 +292,59 @@ async def test_legacy_rows_without_poll_id_join_by_message(
     stored = services.storage.history.read()["history"]
     assert stored[0]["poll_id"] == f"poll-{message_id}"
 
+
+
+async def test_collect_keeps_explanation_telegram_delivered(
+    services, channel, fake_telegram
+):
+    """The dashboard must show the explanation Telegram actually sent."""
+    question = services.questions.create(
+        {
+            "question": "Which protocol uses port 53?",
+            "options": ["HTTP", "DNS", "FTP", "SSH"],
+            "correct_option_id": 1,
+            "explanation": "DNS uses port 53.",
+            "category": "Networking",
+            "difficulty": "easy",
+            "status": "ready",
+        }
+    )
+    entry = await services.publishing.publish(question["id"], channel["id"])
+    fake_telegram.poll_snapshots[entry["message_id"]] = _snapshot(
+        entry["message_id"], [0, 1, 0, 0], explanation="DNS uses port 53."
+    )
+    await services.analytics.collect(services.telegram)
+
+    row = services.analytics.per_question()[0]
+    assert row["explanation"] == "DNS uses port 53."
+    detail = services.analytics.poll_detail(row["poll_id"])
+    assert detail["explanation"] == "DNS uses port 53."
+
+    # The stored snapshot keeps the delivered text even if the question changes.
+    services.storage.questions.update(
+        lambda doc: [
+            q.update({"explanation": "changed later"})
+            for q in doc["questions"]
+            if q["id"] == question["id"]
+        ]
+    )
+    assert services.analytics.per_question()[0]["explanation"] == "DNS uses port 53."
+
+
+async def test_explanation_falls_back_to_question(services, channel, fake_telegram):
+    """Rows collected before explanations were stored still show the question text."""
+    question = services.questions.create(
+        {
+            "question": "Which protocol uses port 53?",
+            "options": ["HTTP", "DNS"],
+            "correct_option_id": 1,
+            "explanation": "DNS uses port 53.",
+            "status": "ready",
+        }
+    )
+    entry = await services.publishing.publish(question["id"], channel["id"])
+    fake_telegram.poll_snapshots[entry["message_id"]] = _snapshot(
+        entry["message_id"], [0, 1]
+    )
+    await services.analytics.collect(services.telegram)
+    assert services.analytics.per_question()[0]["explanation"] == "DNS uses port 53."
