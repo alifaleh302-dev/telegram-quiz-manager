@@ -7,6 +7,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.security import hash_password, verify_password
+from app.core.timezones import is_valid_timezone
 from app.services.audit_service import AuditService
 from app.storage.json_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError
@@ -64,6 +65,11 @@ class SettingsService:
                     if mode not in ("bot", "userbot"):
                         raise ValidationError("نوع النشر الافتراضي يجب أن يكون bot أو userbot.")
                     document["transport"] = {"default_mode": mode}
+                elif key == "timezone":
+                    zone = str(value or "").strip()
+                    if not is_valid_timezone(zone):
+                        raise ValidationError(f"المنطقة الزمنية «{zone}» غير معروفة.")
+                    document["timezone"] = zone
                 else:
                     document[key] = value
             return document

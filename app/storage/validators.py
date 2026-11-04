@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.timezones import is_valid_timezone
+
 DIFFICULTIES = ("easy", "medium", "hard")
 QUESTION_STATUSES = ("draft", "ready", "published")
 SCHEDULE_TYPES = ("daily", "times", "weekdays", "interval", "once", "manual")
@@ -218,6 +220,12 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if start_date and end_date and start_date > end_date:
         raise ValidationError("تاريخ البداية يجب أن يسبق تاريخ النهاية.")
 
+    timezone = _clean_text(
+        payload.get("timezone"), "المنطقة الزمنية", max_length=64, required=False
+    )
+    if timezone and not is_valid_timezone(timezone):
+        raise ValidationError(f"المنطقة الزمنية «{timezone}» غير معروفة.")
+
     return {
         "channel_id": channel_id,
         "type": schedule_type,
@@ -225,9 +233,7 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "times": times,
         "weekdays": sorted(set(weekdays)),
         "interval_minutes": interval_minutes,
-        "timezone": _clean_text(
-            payload.get("timezone"), "المنطقة الزمنية", max_length=64, required=False
-        ),
+        "timezone": timezone,
         "question_selection": selection,
         "category_filter": category_filter,
         "questions_per_day": per_day,

@@ -395,6 +395,16 @@ def test_unknown_setting_key_rejected(app_client) -> None:
     assert response.status_code == 400
 
 
+def test_unknown_timezone_setting_rejected(app_client) -> None:
+    _login(app_client)
+    response = app_client.put(
+        "/api/settings",
+        json={"timezone": "Asia/Adan"},
+        headers={"X-CSRF-Token": _csrf(app_client)},
+    )
+    assert response.status_code == 400
+
+
 def test_password_change_flow(app_client) -> None:
     _login(app_client)
     headers = {"X-CSRF-Token": _csrf(app_client)}

@@ -11,6 +11,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.logging import get_logger
+from app.core.timezones import safe_timezone
 from app.scheduler.jobs import ScheduleRunner, once_datetime, weekdays_to_cron
 from app.services.schedule_service import ScheduleService
 
@@ -59,8 +60,13 @@ class SchedulerEngine:
 
         count = 0
         for schedule in self._schedules.list_schedules():
-            if self._add_schedule(schedule):
-                count += 1
+            try:
+                if self._add_schedule(schedule):
+                    count += 1
+            except Exception:  # noqa: BLE001 - one bad schedule must not stop the rest
+                logger.exception(
+                    "skipping schedule %s: could not build a trigger", schedule.get("id")
+                )
         self._schedule_analytics()
         logger.info("scheduler loaded %s active job(s)", count)
         return count
@@ -110,7 +116,15 @@ class SchedulerEngine:
         return True
 
     def _build_trigger(self, schedule: dict[str, Any]) -> Any:
-        timezone = schedule.get("timezone") or "UTC"
+        # An unknown zone must not crash the scheduler; fall back to UTC.
+        raw_zone = schedule.get("timezone")
+        timezone = safe_timezone(raw_zone)
+        if raw_zone and str(timezone) != raw_zone:
+            logger.warning(
+                "schedule %s has unknown timezone %r; using UTC",
+                schedule.get("id"),
+                raw_zone,
+            )
         schedule_type = schedule.get("type", "daily")
         times = schedule.get("times") or []
 

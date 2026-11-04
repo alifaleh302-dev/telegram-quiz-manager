@@ -308,3 +308,58 @@ async def test_engine_survives_a_failing_job(services, monkeypatch) -> None:
         assert engine._scheduler.running  # noqa: SLF001
     finally:
         engine.shutdown()
+
+
+def test_unknown_timezone_is_rejected_on_create(services) -> None:
+    """A typo like ``Asia/Adan`` must be refused, not stored."""
+    import pytest
+
+    from app.storage.validators import ValidationError
+
+    with pytest.raises(ValidationError):
+        _schedule(services, timezone="Asia/Adan")
+
+
+async def test_unknown_timezone_in_stored_data_does_not_crash_startup(services) -> None:
+    """Stored data can be hand-edited; a bad zone must fall back to UTC."""
+    schedule = _schedule(services)
+
+    # Bypass validation to simulate a hand-edited file.
+    def _corrupt(document):
+        document["schedules"][0]["timezone"] = "Asia/Adan"
+
+    services.storage.schedules.update(_corrupt)
+
+    engine = SchedulerEngine(services.runner, services.schedules)
+    engine.start()
+    try:
+        job = engine._scheduler.get_job(f"schedule:{schedule['id']}")  # noqa: SLF001
+        assert job is not None
+        assert str(job.trigger.timezone) == "UTC"
+    finally:
+        engine.shutdown()
+
+
+async def test_engine_reload_skips_a_broken_schedule(services, monkeypatch) -> None:
+    """One unbuildable schedule must not stop the others from loading."""
+    good = _schedule(services)
+    engine = SchedulerEngine(services.runner, services.schedules)
+    original = engine._build_trigger  # noqa: SLF001
+
+    def _explode(schedule):
+        if schedule.get("timezone") == "Broken/Zone":
+            raise RuntimeError("synthetic trigger failure")
+        return original(schedule)
+
+    monkeypatch.setattr(engine, "_build_trigger", _explode)
+    services.storage.schedules.update(
+        lambda doc: doc["schedules"].append(
+            {**doc["schedules"][0], "id": "SCHBROKEN", "timezone": "Broken/Zone"}
+        )
+    )
+
+    engine.start()
+    try:
+        assert engine._scheduler.get_job(f"schedule:{good['id']}") is not None  # noqa: SLF001
+    finally:
+        engine.shutdown()
