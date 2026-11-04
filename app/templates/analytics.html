@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}الإحصائيات — {{ app_name }}{% endblock %}
+{% block page_title %}إحصائيات التفاعل{% endblock %}
+{% block page_subtitle %}مشاركة الأعضاء وتفاعلهم مع كل سؤال في كل قناة{% endblock %}
+
+{% block topbar_actions %}
+<div class="d-flex gap-2 flex-wrap align-items-center">
+  <form method="get" action="/analytics" class="d-flex gap-2">
+    <select class="form-select form-select-sm" name="channel" onchange="this.form.submit()">
+      <option value="">كل القنوات</option>
+      {% for c in channels %}
+      <option value="{{ c.id }}" {{ 'selected' if channel_filter == c.id }}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <button class="btn btn-sm btn-primary" id="collectBtn" onclick="TQM.collectAnalytics()">
+    <i class="bi bi-cloud-download"></i> جمع النتائج الآن
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="alert alert-info small d-flex gap-2 align-items-start">
+  <i class="bi bi-info-circle mt-1"></i>
+  <div>
+    تُقرأ أعداد التصويت من Telegram عند الضغط على «جمع النتائج الآن». ملاحظة مهمة:
+    قراءة النتائج <strong>تُغلق الاستطلاع</strong> نهائياً — لذلك اجمع النتائج بعد انتهاء
+    التصويت على السؤال. لمتابعة تفاعل <strong>كل عضو</strong> لحظياً، اجعل خيار
+    «استطلاع مجهول» في الإعدادات <strong>مغلقاً</strong>.
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-icon bg-primary-subtle"><i class="bi bi-collection-play"></i></div>
+    <div><div class="stat-value">{{ overview.polls }}</div>
+      <div class="stat-label">أسئلة منشورة</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-success-subtle"><i class="bi bi-people"></i></div>
+    <div><div class="stat-value">{{ overview.total_votes }}</div>
+      <div class="stat-label">إجمالي المصوّتين</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-info-subtle"><i class="bi bi-graph-up-arrow"></i></div>
+    <div><div class="stat-value">{{ overview.avg_votes }}</div>
+      <div class="stat-label">متوسط التصويت لكل سؤال</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-warning-subtle"><i class="bi bi-patch-check"></i></div>
+    <div><div class="stat-value">{{ overview.avg_correct_pct if overview.avg_correct_pct is not none else '—' }}{% if overview.avg_correct_pct is not none %}%{% endif %}</div>
+      <div class="stat-label">متوسط الإجابات الصحيحة</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-secondary-subtle"><i class="bi bi-broadcast"></i></div>
+    <div><div class="stat-value">{{ overview.channels }}</div>
+      <div class="stat-label">قنوات بها تفاعل</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-danger-subtle"><i class="bi bi-eye"></i></div>
+    <div><div class="stat-value">{{ overview.collected }}/{{ overview.polls }}</div>
+      <div class="stat-label">أسئلة جُمعت نتائجها</div></div>
+  </div>
+</div>
+
+<div class="grid-two">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-bar-chart"></i> النشاط (آخر 14 يوماً)</h2></div>
+    <div class="panel-body">
+      <canvas id="activityChart" height="200"></canvas>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-pie-chart"></i> التصويت حسب التصنيف</h2></div>
+    <div class="panel-body">
+      {% if by_category %}
+      <canvas id="categoryChart" height="200"></canvas>
+      {% else %}
+      <p class="empty-state">لا توجد نتائج بعد. اضغط «جمع النتائج الآن».</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header"><h2><i class="bi bi-broadcast-pin"></i> التفاعل حسب القناة</h2></div>
+  <div class="panel-body">
+    {% if by_channel %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>القناة</th><th>أسئلة منشورة</th><th>إجمالي التصويتات</th>
+            <th>متوسط لكل سؤال</th><th>الإجابات الصحيحة</th><th>الأعضاء</th>
+            <th>نسبة المشاركة</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in by_channel %}
+          <tr>
+            <td><strong>{{ row.name }}</strong></td>
+            <td>{{ row.polls }}</td>
+            <td>{{ row.votes }}</td>
+            <td>{{ row.avg_votes }}</td>
+            <td>{% if row.correct_pct is not none %}{{ row.correct_pct }}%{% else %}—{% endif %}</td>
+            <td>{{ row.total_members or '—' }}</td>
+            <td>
+              {% if row.participation_pct is not none %}
+              <span class="badge text-bg-info">{{ row.participation_pct }}%</span>
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">لا توجد بيانات قنوات بعد.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header">
+    <h2><i class="bi bi-list-check"></i> تفاعل كل سؤال</h2>
+    <span class="panel-link">اضغط على أي سؤال لعرض تفصيل الخيارات</span>
+  </div>
+  <div class="panel-body">
+    {% if per_question %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>السؤال</th><th>القناة</th><th>التصنيف</th><th>التصويتات</th>
+            <th>المشاركة</th><th>الصحيحة</th><th>الحالة</th><th class="text-end">تفصيل</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in per_question %}
+          <tr class="clickable-row" onclick="TQM.showPollDetail('{{ row.poll_id }}')">
+            <td class="question-cell">
+              <span class="q-text">{{ row.question_text }}</span>
+              <span class="q-correct"><code>{{ row.question_id }}</code> · رسالة {{ row.message_id }}</span>
+            </td>
+            <td>{{ row.channel_name }}</td>
+            <td><span class="badge text-bg-dark">{{ row.category or '—' }}</span></td>
+            <td><strong>{{ row.votes }}</strong></td>
+            <td>
+              {% if row.participation_pct is not none %}
+              <div class="progress" style="height:6px;min-width:70px">
+                <div class="progress-bar bg-info" style="width: {{ [row.participation_pct, 100] | min }}%"></div>
+              </div>
+              <span class="small text-secondary">{{ row.participation_pct }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if row.correct_pct is not none %}
+              <span class="badge {{ 'text-bg-success' if row.correct_pct >= 50 else 'text-bg-warning' }}">
+                {{ row.correct_pct }}%
+              </span>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if row.collected %}
+              <span class="badge text-bg-{{ 'secondary' if row.is_closed else 'success' }}">
+                {{ 'مُغلق' if row.is_closed else 'مفتوح' }}
+              </span>
+              {% else %}
+              <span class="badge text-bg-light text-dark">لم تُجمع</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-light">
+                <i class="bi bi-bar-chart-steps"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-bar-chart"></i><br>
+      لا توجد أسئلة منشورة بعد. انشر أسئلة من بنك الأسئلة ثم اجمع النتائج.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+{% if overview.live_answers %}
+<div class="panel">
+  <div class="panel-header">
+    <h2><i class="bi bi-person-check"></i> المتابعة اللحظية لكل عضو</h2>
+    <span class="panel-link">{{ overview.unique_voters }} عضو · {{ overview.live_answers }} إجابة</span>
+  </div>
+  <div class="panel-body">
+    <p class="hint">
+      <i class="bi bi-info-circle"></i>
+      تُسجَّل هذه الإجابات لحظياً لأن الاستطلاع غير مجهول.
+      نسبة الإجابات الصحيحة:
+      <strong>{{ overview.live_correct_pct }}%</strong>.
+    </p>
+  </div>
+</div>
+{% endif %}
+
+<div class="modal fade" id="pollDetailModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-bar-chart-steps"></i> تفصيل تفاعل السؤال</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="pollDetailBody">
+        <p class="empty-state">جارٍ التحميل…</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const activity = {{ activity | tojson }};
+  const categoryData = {{ by_category | tojson }};
+  const palette = ['#6366f1','#22c55e','#f59e0b','#06b6d4','#ef4444','#a855f7','#14b8a6','#eab308'];
+
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.Chart) {
+      new Chart(document.getElementById('activityChart'), {
+        type: 'line',
+        data: {
+          labels: activity.labels,
+          datasets: [
+            { label: 'أسئلة منشورة', data: activity.published, borderColor: '#6366f1',
+              backgroundColor: 'rgba(99,102,241,0.15)', fill: true, tension: 0.3 },
+            { label: 'تصويتات مسجّلة', data: activity.votes, borderColor: '#22c55e',
+              backgroundColor: 'rgba(34,197,94,0.15)', fill: true, tension: 0.3 },
+          ]
+        },
+        options: {
+          plugins: { legend: { labels: { color: '#cbd5e1' } } },
+          scales: { x: { ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' }, beginAtZero: true } }
+        }
+      });
+
+      if (categoryData.length) {
+        new Chart(document.getElementById('categoryChart'), {
+          type: 'doughnut',
+          data: {
+            labels: categoryData.map((c) => c.category),
+            datasets: [{
+              data: categoryData.map((c) => c.votes),
+              backgroundColor: palette,
+              borderWidth: 0
+            }]
+          },
+          options: { plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1' } } } }
+        });
+      }
+    }
+  });
+</script>
+{% endblock %}

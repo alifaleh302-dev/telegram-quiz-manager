@@ -97,6 +97,10 @@
           <input class="form-check-input" type="checkbox" name="poll_anonymous"
                  id="pollAnonymous" {{ 'checked' if config.poll_options.anonymous }}>
           <label class="form-check-label" for="pollAnonymous">استطلاع مجهول الهوية</label>
+          <div class="hint">
+            لإحصاء تفاعل كل عضو بشكل لحظي، ألغِ هذا الخيار؛ سيصبح التصويت علنياً
+            وتصل إجابة كل عضو إلى النظام مباشرة.
+          </div>
         </div>
         <div class="row g-3">
           <div class="col-6">
@@ -114,6 +118,26 @@
             <input class="form-control" type="number" name="delay_seconds" min="5"
                    value="{{ config.retry.delay_seconds }}">
           </div>
+        </div>
+        <hr class="my-4">
+        <h3 class="h6"><i class="bi bi-bar-chart-line"></i> إحصائيات التفاعل</h3>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="analytics_auto_collect"
+                 id="analyticsAutoCollect"
+                 {{ 'checked' if config.analytics and config.analytics.auto_collect }}>
+          <label class="form-check-label" for="analyticsAutoCollect">
+            جمع النتائج تلقائياً في الخلفية
+          </label>
+          <div class="hint">
+            <i class="bi bi-exclamation-triangle"></i>
+            تنبيه: جمع النتائج يُغلق الاستطلاع. شغّل هذا الخيار فقط إذا كانت أسئلتك
+            بمدة إغلاق محددة.
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">الفاصل بين عمليات الجمع (ساعات)</label>
+          <input class="form-control" type="number" name="analytics_auto_collect_hours" min="1"
+                 value="{{ (config.analytics.auto_collect_hours if config.analytics else 6) or 6 }}">
         </div>
         <button class="btn btn-primary mt-3" type="submit"><i class="bi bi-save"></i> حفظ الإعدادات</button>
       </form>

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, channels, dashboard, publishing, questions, schedules, settings as settings_api
+from app.api import analytics
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.services.container import build_services
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(channels.router)
     app.include_router(schedules.router)
     app.include_router(publishing.router)
+    app.include_router(analytics.router)
     app.include_router(settings_api.router)
 
     @app.exception_handler(ValidationError)

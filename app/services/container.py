@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from app.core.config import Settings
 from app.scheduler.engine import SchedulerEngine
 from app.scheduler.jobs import ScheduleRunner
+from app.services.analytics_service import AnalyticsService
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
 from app.services.channel_service import ChannelService
@@ -30,6 +31,7 @@ class Services:
     schedules: ScheduleService
     publishing: PublishingService
     app_settings: SettingsService
+    analytics: AnalyticsService
     backups: BackupService
     runner: ScheduleRunner
     engine: SchedulerEngine
@@ -64,6 +66,7 @@ def build_services(settings: Settings) -> Services:
     publishing = PublishingService(
         storage, audit, questions, channels, app_settings, telegram
     )
+    analytics = AnalyticsService(storage, audit, questions, channels)
     backups = BackupService(storage, audit)
 
     runner = ScheduleRunner(
@@ -73,9 +76,14 @@ def build_services(settings: Settings) -> Services:
         settings=app_settings,
         audit=audit,
     )
-    engine = SchedulerEngine(runner, schedules)
+    engine = SchedulerEngine(runner, schedules, analytics, app_settings, telegram)
     bot = BotManager(
-        {"questions": questions, "channels": channels, "publishing": publishing},
+        {
+            "questions": questions,
+            "channels": channels,
+            "publishing": publishing,
+            "analytics": analytics,
+        },
         secret_store=secrets,
     )
 
@@ -90,6 +98,7 @@ def build_services(settings: Settings) -> Services:
         schedules=schedules,
         publishing=publishing,
         app_settings=app_settings,
+        analytics=analytics,
         backups=backups,
         runner=runner,
         engine=engine,

@@ -17,7 +17,8 @@
 | القنوات | إضافة/حذف، قناة افتراضية، تفعيل/تعطيل، اختبار النشر، آخر عملية ناجحة |
 | الجدولة | يومي، عدة مرات يومياً، أيام محددة، فاصل زمني، تاريخ محدد، يدوي فقط + نافذة بداية/نهاية ومنطقة زمنية |
 | سجل النشر | كل محاولة: السؤال، القناة، الوقت، الحالة، Message ID، الخطأ، عدد المحاولات + إعادة المحاولة يدوياً |
-| الإعدادات | إعدادات النشر، كلمة المرور، سجل تسجيل الدخول، النسخ الاحتياطي والاستعادة والتصدير ZIP |
+| الإحصائيات | تفاعل الأعضاء مع كل سؤال في كل قناة: عدد التصويتات، نسبة المشاركة، نسبة الإجابات الصحيحة، تفصيل الخيارات، ورسم للنشاط اليومي |
+| الإعدادات | إعدادات النشر، إعدادات الإحصائيات، كلمة المرور، سجل تسجيل الدخول، النسخ الاحتياطي والاستعادة والتصدير ZIP |
 
 ---
 
@@ -65,17 +66,17 @@ app/
 │   ├── config.py           # الإعدادات من متغيرات البيئة
 │   ├── logging.py          # تسجيل موحّد إلى ملف ودوران الملفات
 │   └── security.py         # Argon2، جلسات موقّعة، CSRF، تشفير الأسرار (Fernet)
-├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, settings, auth
-├── services/               # منطق العمل: questions, channels, schedules, publishing, settings, secret_store, backup, audit
-├── telegram/               # العميل (send_quiz / test_channel / get_me) ومدير البوت (polling/webhook)
+├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, analytics, settings, auth
+├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, secret_store, backup, audit
+├── telegram/               # العميل (send_quiz / test_channel / get_me / أعداد التصويت) ومدير البوت (polling/webhook)
 ├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler)
 ├── storage/                # JSON مع كتابة ذرّية وقفل ملفات + التحقق من الصحة
 ├── templates/              # واجهات Jinja2 (RTL عربية)
 └── static/                 # CSS و JavaScript
 
-data/      # questions / channels / schedules / publishing_history / settings / users / secrets / audit_log
+data/      # questions / channels / schedules / publishing_history / poll_results / poll_answers / settings / users / secrets / audit_log
 logs/      # app.log
-tests/     # 120 اختباراً
+tests/     # 136 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 ```
 
@@ -111,6 +112,9 @@ tools/     # smoke_test.sh · telegram_check.py
 | POST | `/api/publishing/retry/{id}` | إعادة محاولة عملية فاشلة |
 | POST | `/api/publishing/reconcile` | مراجعة العمليات غير المحسومة |
 | GET | `/api/history` | سجل النشر + الإحصاءات |
+| GET | `/api/analytics` | إحصاءات التفاعل (نظرة عامة + لكل سؤال/قناة/تصنيف) |
+| GET | `/api/analytics/poll/{poll_id}` | تفصيل خيارات استطلاع واحد وإجابات الأعضاء |
+| POST | `/api/analytics/collect` | جمع أعداد التصويت من Telegram |
 | GET/PUT | `/api/settings` | الإعدادات |
 | GET/POST/DELETE | `/api/settings/telegram-token` | عرض/حفظ/حذف توكن البوت |
 | POST | `/api/settings/telegram-token/test` | اختبار صلاحية التوكن |
@@ -154,7 +158,7 @@ tools/     # smoke_test.sh · telegram_check.py
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 120 اختباراً
+python -m pytest              # 136 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
@@ -184,9 +188,33 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
 أنواع الجدولة: `daily` · `times` · `weekdays` · `interval` · `once` · `manual`.
 طرق اختيار الأسئلة: `sequential` · `random` · `category`.
 
+الملفان `data/poll_results.json` و`data/poll_answers.json` يحفظان إحصاءات
+التفاعل: الأول صف لكل استطلاع (أحدث قراءة للأعداد)، والثاني إجابة كل عضو
+عندما يكون الاستطلاع غير مجهول.
+
 ---
 
-## 9. النشر على سيرفر
+## 9. إحصاءات التفاعل وقيود Telegram
+
+تعتمد صفحة **الإحصائيات** على واجهة Telegram Bot API، وهناك قيدان مهمّان
+يجب فهمهما قبل الاستخدام:
+
+1. **قراءة الأعداد تُغلق الاستطلاع.** لا يوفّر Telegram أي طريقة لقراءة
+   أعداد التصويت دون استدعاء `stopPoll`، وهذا الاستدعاء يُغلق الاستطلاع
+   نهائياً. لذلك لا يجمع النظام النتائج تلقائياً بعد كل تصويت (وإلا توقف كل
+   اختبار فور نشره)، بل يجمعها عند الطلب من زر **«جمع النتائج الآن»** أو عبر
+   مهمة مجدولة (اختيارية) بعد أن ينتهي التصويت.
+
+2. **تتبّع كل عضو يحتاج استطلاعاً غير مجهول.** إشعار `poll_answer` الذي يحمل
+   هوية المصوّت لا يصل للبوت في الاستطلاعات المجهولة. لتتبّع تفاعل كل عضو
+   لحظياً، ألغِ خيار «استطلاع مجهول الهوية» في الإعدادات (سيكون التصويت علناً).
+
+عملياً: استخدم الجمع اليدوي/المجدول للأعداد الإجمالية، واختر التصويت العلني
+إذا أردت معرفة من أجاب بماذا.
+
+---
+
+## 10. النشر على سيرفر
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1

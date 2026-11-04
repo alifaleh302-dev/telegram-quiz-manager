@@ -17,6 +17,7 @@ _EDITABLE_KEYS = {
     "poll_options",
     "retry",
     "daily_limit",
+    "analytics",
 }
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -52,6 +53,11 @@ class SettingsService:
                     }
                 elif key == "daily_limit":
                     document["daily_limit"] = max(0, int(value))
+                elif key == "analytics":
+                    document["analytics"] = {
+                        "auto_collect": bool(value.get("auto_collect", False)),
+                        "auto_collect_hours": max(1, int(value.get("auto_collect_hours", 6))),
+                    }
                 else:
                     document[key] = value
             return document

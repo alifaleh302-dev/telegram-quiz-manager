@@ -107,6 +107,7 @@ _PAGE_MAP = {
     "/channels": "channels",
     "/schedules": "schedules",
     "/history": "history",
+    "/analytics": "analytics",
     "/settings": "settings",
 }
 

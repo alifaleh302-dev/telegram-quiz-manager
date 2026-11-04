@@ -98,6 +98,7 @@ class PublishingService:
                 "channel_id": channel_id,
                 "schedule_id": schedule_id,
                 "message_id": None,
+                "poll_id": None,
                 "status": STATUS_PENDING,
                 "error": None,
                 "error_code": None,
@@ -118,6 +119,7 @@ class PublishingService:
         *,
         status: str,
         message_id: int | None = None,
+        poll_id: str | None = None,
         error: str | None = None,
         error_code: str | None = None,
         retryable: bool = False,
@@ -128,6 +130,8 @@ class PublishingService:
                 if entry["id"] == entry_id:
                     entry["status"] = status
                     entry["message_id"] = message_id
+                    if poll_id is not None:
+                        entry["poll_id"] = poll_id
                     entry["error"] = error
                     entry["error_code"] = error_code
                     entry["retryable"] = retryable
@@ -187,7 +191,10 @@ class PublishingService:
 
             if result.ok:
                 final = self._finish(
-                    entry["id"], status=STATUS_SUCCESS, message_id=result.message_id
+                    entry["id"],
+                    status=STATUS_SUCCESS,
+                    message_id=result.message_id,
+                    poll_id=result.poll_id,
                 )
                 self._mark_question_published(question_id)
                 self._channels.record_publish(channel_id, STATUS_SUCCESS)

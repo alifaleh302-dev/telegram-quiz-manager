@@ -521,6 +521,10 @@ const TQM = (() => {
           max_attempts: Number(form.get('max_attempts') || 3),
           delay_seconds: Number(form.get('delay_seconds') || 60),
         },
+        analytics: {
+          auto_collect: form.get('analytics_auto_collect') === 'on',
+          auto_collect_hours: Number(form.get('analytics_auto_collect_hours') || 6),
+        },
       };
       const result = await api('/api/settings', { method: 'PUT', body: payload });
       toast(result.ok ? 'تم حفظ الإعدادات' : result.error, result.ok ? 'success' : 'error');
@@ -572,6 +576,73 @@ const TQM = (() => {
     else toast(result.error, 'error');
   }
 
+  // ---------- Analytics ----------
+  async function collectAnalytics() {
+    const button = document.getElementById('collectBtn');
+    if (button) button.disabled = true;
+    toast('جارٍ جمع النتائج من Telegram…', 'info');
+    const result = await api('/api/analytics/collect', { method: 'POST', body: {} });
+    if (button) button.disabled = false;
+    if (result.ok) {
+      const d = result.data;
+      if (!d.ok) {
+        toast(`تعذّر جمع بعض النتائج (${d.errors} خطأ).`, 'warning');
+      } else if (d.collected === 0) {
+        toast('لا توجد نتائج جديدة لجمعها.', 'warning');
+      } else {
+        toast(`تم جمع نتائج ${d.collected} سؤالاً`);
+      }
+      setTimeout(() => window.location.reload(), 900);
+    } else {
+      toast(result.error, 'error');
+    }
+  }
+
+  async function showPollDetail(pollId) {
+    const body = document.getElementById('pollDetailBody');
+    if (!body) return;
+    body.innerHTML = '<p class="empty-state">جارٍ التحميل…</p>';
+    new bootstrap.Modal(document.getElementById('pollDetailModal')).show();
+    const result = await api(`/api/analytics/poll/${encodeURIComponent(pollId)}`);
+    if (!result.ok || !result.data.ok) {
+      body.innerHTML = `<div class="alert alert-warning mb-0">${result.data?.error || result.error}</div>`;
+      return;
+    }
+    const p = result.data.poll;
+    let html = `<h6 class="mb-1">${p.question_text}</h6>
+      <p class="small text-secondary mb-3">
+        ${p.channel_name} · <code>${p.question_id}</code> · رسالة ${p.message_id} ·
+        ${p.votes} مصوّت · مشاركة ${p.participation_pct ?? '—'}%
+      </p>`;
+    if (p.options.length) {
+      html += '<ul class="poll-breakdown">';
+      p.options.forEach((o) => {
+        html += `<li class="${o.is_correct ? 'correct' : ''}">
+          <span class="opt-label">${o.text}</span>
+          <span class="opt-bar"><i style="width:${o.pct}%"></i></span>
+          <span class="opt-num">${o.voter_count} (${o.pct}%)</span>
+          ${o.is_correct ? '<i class="bi bi-check-circle-fill text-success"></i>' : ''}
+        </li>`;
+      });
+      html += '</ul>';
+    } else {
+      html += '<p class="empty-state">لم تُجمع أعداد هذا السؤال بعد. اضغط «جمع النتائج الآن».</p>';
+    }
+    if (p.answers && p.answers.length) {
+      html += `<h6 class="mt-3">إجابات الأعضاء (${p.answers.length})</h6>
+        <div class="table-responsive"><table class="table table-sm">
+        <thead><tr><th>العضو</th><th>الخيار</th><th>صحيحة؟</th><th>الوقت</th></tr></thead><tbody>`;
+      p.answers.forEach((a) => {
+        const choice = a.option_ids.map((i) => p.options[i]?.text ?? i).join(', ') || '—';
+        html += `<tr><td>${a.username || a.user_id}</td><td>${choice}</td>
+          <td>${a.is_correct === null ? '—' : (a.is_correct ? '✅' : '❌')}</td>
+          <td class="small text-secondary">${a.answered_at}</td></tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+    body.innerHTML = html;
+  }
+
   return {
     api, toast, quickAction, publishNow, previewQuestion, duplicateQuestion, deleteQuestion,
     bulk, initQuestionTable, initImportForm, initEditor,
@@ -579,5 +650,6 @@ const TQM = (() => {
     setDefaultChannel, deleteChannel,
     initScheduleForm, showScheduleForm, hideScheduleForm, scheduleAction,
     retryPublish, initSettingsForms, restoreBackup, revealToken,
+    collectAnalytics, showPollDetail,
   };
 })();

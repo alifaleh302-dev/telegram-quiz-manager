@@ -234,6 +234,7 @@ class Storage:
                 },
                 "retry": {"max_attempts": 3, "delay_seconds": 60},
                 "daily_limit": 0,
+                "analytics": {"auto_collect": False, "auto_collect_hours": 6},
                 "paused_schedules": [],
                 "state": {},
             },
@@ -254,6 +255,19 @@ class Storage:
             {"version": 1, "entries": []},
             backup_dir=self.backup_dir,
         )
+        # One row per poll snapshot. ``poll_id`` is the Telegram poll id, so the
+        # latest row for a poll carries the freshest counts.
+        self.poll_results = JsonStore(
+            self.data_dir / "poll_results.json",
+            {"version": 1, "counter": 0, "results": []},
+            backup_dir=self.backup_dir,
+        )
+        # Live per-user answers, only available for non-anonymous polls.
+        self.poll_answers = JsonStore(
+            self.data_dir / "poll_answers.json",
+            {"version": 1, "counter": 0, "answers": []},
+            backup_dir=self.backup_dir,
+        )
 
     def all_stores(self) -> dict[str, JsonStore]:
         return {
@@ -265,4 +279,6 @@ class Storage:
             "users": self.users,
             "secrets": self.secrets,
             "audit_log": self.audit,
+            "poll_results": self.poll_results,
+            "poll_answers": self.poll_answers,
         }

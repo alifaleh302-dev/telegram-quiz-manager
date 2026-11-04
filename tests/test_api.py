@@ -341,3 +341,66 @@ def test_backup_create_and_export(app_client) -> None:
 
 def test_health_endpoint(app_client) -> None:
     assert app_client.get("/healthz").json() == {"status": "ok"}
+
+
+# --- analytics -------------------------------------------------------------
+
+def test_analytics_page_renders(app_client) -> None:
+    _login(app_client)
+    response = app_client.get("/analytics")
+    assert response.status_code == 200
+    assert "إحصائيات التفاعل" in response.text
+    assert "جمع النتائج الآن" in response.text
+
+
+def test_analytics_requires_auth(app_client) -> None:
+    assert app_client.get("/api/analytics").status_code == 401
+    assert app_client.get("/analytics", follow_redirects=False).status_code == 303
+
+
+def test_analytics_payload_shape(app_client) -> None:
+    _login(app_client)
+    response = app_client.get("/api/analytics")
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data) >= {
+        "overview", "per_question", "by_channel", "by_category", "activity"
+    }
+    assert data["per_question"] == []
+    assert data["overview"]["polls"] == 0
+    assert len(data["activity"]["labels"]) == 14
+
+
+def test_analytics_poll_detail_missing_returns_error(app_client) -> None:
+    _login(app_client)
+    response = app_client.get("/api/analytics/poll/does-not-exist")
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+
+
+def test_collect_requires_csrf(app_client) -> None:
+    _login(app_client)
+    assert app_client.post("/api/analytics/collect", json={}).status_code == 403
+
+
+def test_collect_reports_dry_run(app_client) -> None:
+    _login(app_client)
+    response = app_client.post(
+        "/api/analytics/collect", json={}, headers={"X-CSRF-Token": _csrf(app_client)}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # No bot token configured in tests, so collection is refused in dry-run mode.
+    assert body["ok"] is False
+    assert "تجريبي" in body["error"]
+
+
+def test_analytics_settings_roundtrip(app_client) -> None:
+    _login(app_client)
+    response = app_client.put(
+        "/api/settings",
+        json={"analytics": {"auto_collect": True, "auto_collect_hours": 3}},
+        headers={"X-CSRF-Token": _csrf(app_client)},
+    )
+    assert response.status_code == 200
+    assert response.json()["analytics"] == {"auto_collect": True, "auto_collect_hours": 3}

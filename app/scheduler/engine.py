@@ -17,14 +17,25 @@ from app.services.schedule_service import ScheduleService
 logger = get_logger(__name__)
 
 JOB_PREFIX = "schedule:"
+ANALYTICS_JOB_ID = "analytics:auto-collect"
 
 
 class SchedulerEngine:
     """Keeps the APScheduler job store in sync with ``schedules.json``."""
 
-    def __init__(self, runner: ScheduleRunner, schedules: ScheduleService) -> None:
+    def __init__(
+        self,
+        runner: ScheduleRunner,
+        schedules: ScheduleService,
+        analytics: Any | None = None,
+        settings: Any | None = None,
+        telegram: Any | None = None,
+    ) -> None:
         self._runner = runner
         self._schedules = schedules
+        self._analytics = analytics
+        self._settings = settings
+        self._telegram = telegram
         self._scheduler = AsyncIOScheduler(timezone="UTC")
         self._started = False
 
@@ -50,8 +61,32 @@ class SchedulerEngine:
         for schedule in self._schedules.list_schedules():
             if self._add_schedule(schedule):
                 count += 1
+        self._schedule_analytics()
         logger.info("scheduler loaded %s active job(s)", count)
         return count
+
+    def _schedule_analytics(self) -> None:
+        """Register (or drop) the periodic result-collection job."""
+        if self._analytics is None or self._settings is None or self._telegram is None:
+            return
+        config = self._settings.get().get("analytics") or {}
+        if not config.get("auto_collect"):
+            return
+        hours = max(1, int(config.get("auto_collect_hours", 6)))
+        self._scheduler.add_job(
+            self._collect_analytics,
+            trigger=IntervalTrigger(hours=hours),
+            id=ANALYTICS_JOB_ID,
+            name="جمع نتائج التفاعل",
+            replace_existing=True,
+            max_instances=1,
+        )
+
+    async def _collect_analytics(self) -> None:
+        try:
+            await self._analytics.collect(self._telegram, trigger="auto")
+        except Exception:  # noqa: BLE001 - a failing job must not kill the scheduler
+            logger.exception("automatic analytics collection failed")
 
     def _add_schedule(self, schedule: dict[str, Any]) -> bool:
         if not schedule.get("enabled", True):

@@ -49,7 +49,7 @@ class BotManager:
             logger.info("Telegram token not set; bot listener disabled (dry-run mode).")
             return
         try:
-            from telegram.ext import Application, CommandHandler
+            from telegram.ext import Application, CommandHandler, PollAnswerHandler, PollHandler
         except ImportError:  # pragma: no cover
             logger.error("python-telegram-bot is not installed; bot listener disabled.")
             return
@@ -58,6 +58,8 @@ class BotManager:
         application.add_handler(CommandHandler("start", self._cmd_start))
         application.add_handler(CommandHandler("help", self._cmd_start))
         application.add_handler(CommandHandler("status", self._cmd_status))
+        application.add_handler(PollAnswerHandler(self._on_poll_answer))
+        application.add_handler(PollHandler(self._on_poll))
 
         try:
             await application.initialize()
@@ -138,3 +140,54 @@ class BotManager:
             f"عمليات النشر: نجاح {publishing['success']} / فشل {publishing['failed']}"
         )
         await update.effective_message.reply_text(text, parse_mode="Markdown")
+
+    # --- analytics hooks ---------------------------------------------------
+    async def _on_poll_answer(self, update: Any, context: Any) -> None:
+        """Store a live answer; only non-anonymous polls reach the bot."""
+        analytics = self._services.get("analytics")
+        answer = getattr(update, "poll_answer", None)
+        if analytics is None or answer is None:
+            return
+        user = getattr(answer, "user", None)
+        try:
+            analytics.record_answer(
+                poll_id=answer.poll_id,
+                user_id=getattr(user, "id", None),
+                username=getattr(user, "username", None) or getattr(user, "first_name", None),
+                option_ids=list(answer.option_ids or []),
+                is_anonymous=user is None,
+            )
+        except Exception:  # noqa: BLE001 - analytics must never break the bot
+            logger.exception("failed to record poll answer")
+
+    async def _on_poll(self, update: Any, context: Any) -> None:
+        """Capture final counts when a quiz closes (e.g. it reached its timer)."""
+        analytics = self._services.get("analytics")
+        poll = getattr(update, "poll", None)
+        if analytics is None or poll is None:
+            return
+        entry = analytics._history_entry_for_poll(poll.id)  # noqa: SLF001 - internal lookup
+        if entry is None:
+            return
+        try:
+            from app.telegram.telegram_client import PollSnapshot
+
+            analytics.record_snapshot(
+                question_id=entry["question_id"],
+                channel_id=entry["channel_id"],
+                message_id=entry.get("message_id"),
+                snapshot=PollSnapshot(
+                    ok=True,
+                    poll_id=poll.id,
+                    is_closed=bool(poll.is_closed),
+                    total_voters=int(poll.total_voter_count),
+                    options=[
+                        {"text": o.text, "voter_count": int(o.voter_count)}
+                        for o in poll.options
+                    ],
+                    correct_option_ids=list(poll.correct_option_ids or []),
+                ),
+                trigger="poll-update",
+            )
+        except Exception:  # noqa: BLE001 - analytics must never break the bot
+            logger.exception("failed to record closed poll")

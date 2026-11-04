@@ -8,7 +8,7 @@ the services so the transport can be swapped or faked in tests.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import get_settings
@@ -43,6 +43,7 @@ class PublishResult:
     error_code: str | None = None
     retryable: bool = False
     dry_run: bool = False
+    poll_id: str | None = None
 
     @property
     def status(self) -> str:
@@ -57,6 +58,20 @@ class PublishResult:
         retrying blindly could post the same question twice.
         """
         return self.error_code in _AMBIGUOUS
+
+
+@dataclass
+class PollSnapshot:
+    """The vote counts of one quiz, as returned by ``stopPoll``."""
+
+    ok: bool
+    poll_id: str | None = None
+    is_closed: bool = False
+    total_voters: int = 0
+    options: list[dict[str, Any]] = field(default_factory=list)
+    correct_option_ids: list[int] = field(default_factory=list)
+    error: str | None = None
+    error_code: str | None = None
 
 
 class TelegramClient:
@@ -164,9 +179,46 @@ class TelegramClient:
                 explanation=explanation_text[:200] if (explanation and explanation_text) else None,
                 open_period=open_period or None,
             )
-            return PublishResult(ok=True, message_id=message.message_id)
+            return PublishResult(ok=True, message_id=message.message_id, poll_id=message.poll.id)
         except Exception as exc:  # noqa: BLE001 - telegram raises a wide hierarchy
             return self._classify(exc)
+
+    # --- result collection -------------------------------------------------
+    async def fetch_poll_results(self, chat_id: str, message_id: int) -> PollSnapshot:
+        """Read the vote counts of a quiz.
+
+        Telegram exposes poll counts only through ``stopPoll``, and that call
+        also closes the poll. We deliberately accept that trade-off: results are
+        collected on demand (or once the poll is already closed) rather than
+        polled continuously, which would freeze every quiz the moment it opens.
+        """
+        try:
+            bot = await self._get_bot()
+            poll = await bot.stop_poll(chat_id=chat_id, message_id=message_id)
+            options = [
+                {"text": option.text, "voter_count": int(option.voter_count)}
+                for option in poll.options
+            ]
+            return PollSnapshot(
+                ok=True,
+                poll_id=poll.id,
+                is_closed=bool(poll.is_closed),
+                total_voters=int(poll.total_voter_count),
+                options=options,
+                correct_option_ids=list(poll.correct_option_ids or []),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return PollSnapshot(ok=False, error=str(exc), error_code=type(exc).__name__)
+
+    async def get_member_count(self, chat_id: str) -> int | None:
+        if self.dry_run:
+            return None
+        try:
+            bot = await self._get_bot()
+            return int(await bot.get_chat_member_count(chat_id=chat_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_chat_member_count failed for %s: %s", chat_id, exc)
+            return None
 
     async def test_channel(self, chat_id: str) -> PublishResult:
         """Send a harmless message to confirm the bot can publish there."""
