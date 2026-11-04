@@ -2,33 +2,50 @@
 
 The dashboard is the primary control surface; the bot only answers a couple of
 informational commands so the operator can check status from Telegram itself.
-It is skipped entirely when no token is configured (dry-run mode).
+It is skipped entirely when no token is configured (dry-run mode), and it can be
+restarted from the settings page after the token is set there.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.services.secret_store import SecretStore
 
 logger = get_logger(__name__)
 
 
 class BotManager:
-    def __init__(self, services: dict[str, Any]) -> None:
+    def __init__(
+        self, services: dict[str, Any], secret_store: "SecretStore | None" = None
+    ) -> None:
         self._services = services
+        self._secret_store = secret_store
         self._application: Any = None
         self._task: asyncio.Task[Any] | None = None
+        self._token: str = ""
 
     @property
     def running(self) -> bool:
         return self._application is not None
 
+    def _current_token(self) -> str:
+        if self._secret_store is not None:
+            return self._secret_store.bot_token()
+        from app.core.config import get_settings
+
+        return get_settings().telegram_bot_token.strip()
+
     async def start(self) -> None:
+        from app.core.config import get_settings
+
         config = get_settings()
-        if config.dry_run:
+        token = self._current_token()
+        if not token:
             logger.info("Telegram token not set; bot listener disabled (dry-run mode).")
             return
         try:
@@ -37,24 +54,39 @@ class BotManager:
             logger.error("python-telegram-bot is not installed; bot listener disabled.")
             return
 
-        application = Application.builder().token(config.telegram_bot_token).build()
+        application = Application.builder().token(token).build()
         application.add_handler(CommandHandler("start", self._cmd_start))
         application.add_handler(CommandHandler("help", self._cmd_start))
         application.add_handler(CommandHandler("status", self._cmd_status))
 
-        await application.initialize()
-        await application.start()
-        if config.telegram_mode == "webhook" and config.telegram_webhook_url:
-            await application.bot.set_webhook(
-                url=config.telegram_webhook_url,
-                secret_token=config.telegram_webhook_secret or None,
-            )
-            logger.info("Telegram webhook registered at %s", config.telegram_webhook_url)
-        else:
-            self._task = asyncio.create_task(self._poll(application))
+        try:
+            await application.initialize()
+            await application.start()
+            if config.telegram_mode == "webhook" and config.telegram_webhook_url:
+                await application.bot.set_webhook(
+                    url=config.telegram_webhook_url,
+                    secret_token=config.telegram_webhook_secret or None,
+                )
+                logger.info("Telegram webhook registered at %s", config.telegram_webhook_url)
+            else:
+                self._task = asyncio.create_task(self._poll(application))
+        except Exception:  # noqa: BLE001 - a bad token must not crash startup
+            logger.exception("Telegram bot listener failed to start.")
+            try:
+                await application.shutdown()
+            except Exception:  # noqa: BLE001 - best effort
+                pass
+            return
 
         self._application = application
+        self._token = token
         logger.info("Telegram bot listener started.")
+
+    async def restart(self) -> bool:
+        """Stop the listener (if any) and start it again with the current token."""
+        await self.stop()
+        await self.start()
+        return self.running
 
     async def _poll(self, application: Any) -> None:
         try:
@@ -79,6 +111,7 @@ class BotManager:
             except Exception:  # noqa: BLE001 - best effort shutdown
                 logger.exception("error while shutting the bot listener down")
             self._application = None
+        self._token = ""
 
     # --- commands ----------------------------------------------------------
     async def _cmd_start(self, update: Any, context: Any) -> None:

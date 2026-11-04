@@ -19,6 +19,7 @@ DATA_FILES = (
     "publishing_history.json",
     "settings.json",
     "users.json",
+    "secrets.json",
     "audit_log.json",
 )
 

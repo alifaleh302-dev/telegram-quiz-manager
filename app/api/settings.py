@@ -9,7 +9,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from app.api.deps import api_guard, get_services, render, require_page_session
+from app.core.logging import get_logger
 from app.storage.validators import ValidationError
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["settings"])
 
@@ -23,6 +26,20 @@ class ProfileIn(BaseModel):
     email: str = ""
 
 
+class TelegramTokenIn(BaseModel):
+    token: str = ""
+
+
+async def _apply_new_token(services: Any) -> bool:
+    """Make a freshly stored token take effect without a restart."""
+    services.telegram.reset()
+    try:
+        return await services.bot.restart()
+    except Exception:  # noqa: BLE001 - the dashboard must stay usable
+        logger.exception("failed to restart the bot listener after a token change")
+        return False
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, session=Depends(require_page_session)) -> Response:
     if isinstance(session, RedirectResponse):
@@ -34,17 +51,73 @@ async def settings_page(request: Request, session=Depends(require_page_session))
         {
             "config": services.app_settings.get(),
             "bot": await services.telegram.get_me(),
+            "token": services.secrets.status(),
             "backups": services.backups.list_backups()[:15],
             "logins": services.app_settings.login_history(limit=15),
             "env": {
                 "telegram_mode": services.settings.telegram_mode,
-                "dry_run": services.settings.dry_run,
+                "dry_run": services.dry_run,
                 "data_dir": str(services.settings.data_dir),
+                "secret_key_set": bool(services.settings.secret_key),
             },
             "user": services.app_settings.get_user(session.username),
         },
         session=session,
     )
+
+
+@router.get("/api/settings/telegram-token")
+async def get_telegram_token(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+    return get_services(request).secrets.status()
+
+
+@router.post("/api/settings/telegram-token")
+async def set_telegram_token(
+    request: Request, payload: TelegramTokenIn, session: Any = Depends(api_guard)
+) -> dict[str, Any]:
+    services = get_services(request)
+    status = services.secrets.set_bot_token(payload.token, actor=session.username)
+    restarted = await _apply_new_token(services)
+    return {"ok": True, "restarted": restarted, **status}
+
+
+@router.delete("/api/settings/telegram-token")
+async def clear_telegram_token(
+    request: Request, session: Any = Depends(api_guard)
+) -> dict[str, Any]:
+    services = get_services(request)
+    status = services.secrets.clear_bot_token(actor=session.username)
+    await _apply_new_token(services)
+    return {"ok": True, **status}
+
+
+@router.post("/api/settings/telegram-token/test")
+async def test_telegram_token(
+    request: Request, payload: TelegramTokenIn, session: Any = Depends(api_guard)
+) -> dict[str, Any]:
+    """Verify a token (the submitted one, or the stored one) against Telegram."""
+    services = get_services(request)
+    submitted = payload.token.strip()
+    client = services.telegram
+    if submitted:
+        from app.telegram.telegram_client import TelegramClient
+
+        client = TelegramClient(token=submitted)
+    try:
+        me = await client.get_me()
+    finally:
+        if submitted:
+            await client.close()
+    if not me or me.get("dry_run"):
+        return {
+            "ok": False,
+            "error": "لا يوجد توكن للاختبار. أدخل التوكن أولاً.",
+        }
+    return {
+        "ok": True,
+        "username": me.get("username"),
+        "id": me.get("id"),
+    }
 
 
 @router.get("/api/settings")

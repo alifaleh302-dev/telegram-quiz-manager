@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from app.services.secret_store import SecretStore
 
 logger = get_logger(__name__)
 
@@ -46,21 +49,55 @@ class PublishResult:
 class TelegramClient:
     """Sends quiz polls to channels. Falls back to dry-run when unconfigured."""
 
-    def __init__(self, token: str | None = None, *, dry_run: bool | None = None) -> None:
-        config = get_settings()
-        self.token = (token if token is not None else config.telegram_bot_token).strip()
-        self.dry_run = config.dry_run if dry_run is None else dry_run
+    def __init__(
+        self,
+        token: str | None = None,
+        *,
+        dry_run: bool | None = None,
+        secret_store: "SecretStore | None" = None,
+    ) -> None:
+        self._secret_store = secret_store
+        self._fixed_token = token
+        self._fixed_dry_run = dry_run
         self._bot: Any = None
+        self._bot_token: str | None = None
         self._lock = asyncio.Lock()
 
+    # --- runtime configuration --------------------------------------------
+    @property
+    def token(self) -> str:
+        if self._fixed_token is not None:
+            return self._fixed_token.strip()
+        if self._secret_store is not None:
+            return self._secret_store.bot_token()
+        return get_settings().telegram_bot_token.strip()
+
+    @property
+    def dry_run(self) -> bool:
+        if self._fixed_dry_run is not None:
+            return self._fixed_dry_run
+        return not self.token
+
+    def reset(self) -> None:
+        """Drop the cached Bot so a new token takes effect on the next call."""
+        self._bot = None
+        self._bot_token = None
+
     async def _get_bot(self) -> Any:
-        if self._bot is not None:
-            return self._bot
         from telegram import Bot
 
+        token = self.token
+        if self._bot is not None and self._bot_token == token:
+            return self._bot
         async with self._lock:
-            if self._bot is None:
-                self._bot = Bot(token=self.token)
+            if self._bot is None or self._bot_token != token:
+                if self._bot is not None:
+                    try:
+                        await self._bot.shutdown()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.debug("bot shutdown failed: %s", exc)
+                self._bot = Bot(token=token)
+                self._bot_token = token
         return self._bot
 
     async def close(self) -> None:
@@ -70,6 +107,7 @@ class TelegramClient:
             except Exception as exc:  # pragma: no cover - best effort cleanup
                 logger.debug("bot shutdown failed: %s", exc)
             self._bot = None
+            self._bot_token = None
 
     # --- publishing --------------------------------------------------------
     async def send_quiz(

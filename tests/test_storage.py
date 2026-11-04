@@ -80,7 +80,8 @@ def test_non_object_document_rejected(tmp_path: Path) -> None:
 def test_storage_exposes_all_collections(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "data", tmp_path / "data" / "backups")
     assert set(storage.all_stores()) == {
-        "questions", "channels", "schedules", "history", "settings", "users", "audit_log",
+        "questions", "channels", "schedules", "history", "settings", "users",
+        "secrets", "audit_log",
     }
 
 

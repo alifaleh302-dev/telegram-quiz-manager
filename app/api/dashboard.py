@@ -37,7 +37,7 @@ def _dashboard_payload(services: Services) -> dict[str, Any]:
         "publishing_enabled": bool(settings_doc.get("publishing_enabled", True)),
         "next_runs": services.engine.next_runs(limit=5),
         "recent": services.audit.recent(limit=12),
-        "dry_run": services.settings.dry_run,
+        "dry_run": services.dry_run,
         "timezone": settings_doc.get("timezone"),
         "daily_limit": settings_doc.get("daily_limit", 0),
     }

@@ -13,6 +13,7 @@ from app.services.channel_service import ChannelService
 from app.services.publishing_service import PublishingService
 from app.services.question_service import QuestionService
 from app.services.schedule_service import ScheduleService
+from app.services.secret_store import SecretStore
 from app.services.settings_service import SettingsService
 from app.storage.json_manager import Storage
 from app.telegram.bot import BotManager
@@ -34,6 +35,7 @@ class Services:
     engine: SchedulerEngine
     telegram: TelegramClient
     bot: BotManager
+    secrets: SecretStore
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -41,6 +43,11 @@ class Services:
             "channels": self.channels,
             "publishing": self.publishing,
         }
+
+    @property
+    def dry_run(self) -> bool:
+        """True when no usable bot token is configured (from env or the dashboard)."""
+        return not self.secrets.bot_token()
 
 
 def build_services(settings: Settings) -> Services:
@@ -52,7 +59,8 @@ def build_services(settings: Settings) -> Services:
     channels = ChannelService(storage, audit)
     schedules = ScheduleService(storage, audit, channels)
     app_settings = SettingsService(storage, audit)
-    telegram = TelegramClient()
+    secrets = SecretStore(storage, audit)
+    telegram = TelegramClient(secret_store=secrets)
     publishing = PublishingService(
         storage, audit, questions, channels, app_settings, telegram
     )
@@ -67,7 +75,8 @@ def build_services(settings: Settings) -> Services:
     )
     engine = SchedulerEngine(runner, schedules)
     bot = BotManager(
-        {"questions": questions, "channels": channels, "publishing": publishing}
+        {"questions": questions, "channels": channels, "publishing": publishing},
+        secret_store=secrets,
     )
 
     app_settings.ensure_admin()
@@ -86,4 +95,5 @@ def build_services(settings: Settings) -> Services:
         engine=engine,
         telegram=telegram,
         bot=bot,
+        secrets=secrets,
     )

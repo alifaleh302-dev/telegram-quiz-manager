@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "%s started (dry_run=%s, data=%s)",
         config.app_name,
-        config.dry_run,
+        services.dry_run,
         config.data_dir,
     )
 

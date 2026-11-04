@@ -42,7 +42,7 @@ async def login_page(request: Request) -> Response:
         {
             "app_name": request.app.state.app_name,
             "error": None,
-            "dry_run": services.settings.dry_run,
+            "dry_run": services.dry_run,
             "bootstrap_ready": bool(get_settings().admin_password)
             or bool(services.storage.users.read()["users"]),
         },
@@ -76,7 +76,7 @@ async def login_submit(
             {
                 "app_name": request.app.state.app_name,
                 "error": "اسم المستخدم أو كلمة المرور غير صحيحة.",
-                "dry_run": services.settings.dry_run,
+                "dry_run": services.dry_run,
                 "bootstrap_ready": True,
             },
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -18,13 +18,54 @@
           {% endif %}
         </dd>
         <dt>اسم البوت</dt><dd>{{ ('@' + bot.username) if bot and bot.username else '—' }}</dd>
+        <dt>التوكن الحالي</dt>
+        <dd>
+          {% if token.masked %}
+            <code>{{ token.masked }}</code>
+            <span class="hint">
+              ({{ 'مضبوط من اللوحة' if token.source == 'stored' else 'من ملف .env' }})
+            </span>
+          {% else %}
+            <span class="text-secondary">غير مضبوط</span>
+          {% endif %}
+        </dd>
         <dt>نمط Telegram</dt><dd><code>{{ env.telegram_mode }}</code></dd>
         <dt>مجلد البيانات</dt><dd><code>{{ env.data_dir }}</code></dd>
       </dl>
-      <p class="hint">
+
+      <form id="tokenForm" class="mt-3">
+        <label class="form-label">توكن البوت (من @BotFather)</label>
+        <div class="input-group">
+          <input class="form-control" type="password" name="token" autocomplete="off"
+                 placeholder="123456789:AA..." dir="ltr">
+          <button class="btn btn-outline-light" type="button" onclick="TQM.revealToken(this)">
+            <i class="bi bi-eye"></i>
+          </button>
+        </div>
+        <p class="hint mt-1">
+          يُخزَّن التوكن مشفَّراً في <code>data/secrets.json</code> بمفتاح مشتق من
+          <code>SECRET_KEY</code>، ولا يُعاد عرضه أبداً بعد الحفظ.
+        </p>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-primary btn-sm" type="submit">
+            <i class="bi bi-save"></i> حفظ التوكن
+          </button>
+          <button class="btn btn-outline-info btn-sm" type="button" id="tokenTestBtn">
+            <i class="bi bi-plug"></i> اختبار التوكن
+          </button>
+          {% if token.source == 'stored' %}
+          <button class="btn btn-outline-danger btn-sm" type="button" id="tokenClearBtn">
+            <i class="bi bi-trash"></i> حذف التوكن المخزّن
+          </button>
+          {% endif %}
+        </div>
+        <div id="tokenResult" class="mt-2"></div>
+      </form>
+
+      <p class="hint mt-3">
         <i class="bi bi-shield-lock"></i>
-        توكن البوت وكلمة مرور المدير لا يُخزّنان في ملفات JSON؛
-        يتم ضبطهما عبر متغيرات البيئة في ملف <code>.env</code>.
+        كلمة مرور المدير لا تُخزَّن في ملفات JSON؛ يتم ضبطها عبر متغيرات البيئة
+        في ملف <code>.env</code>.
       </p>
     </div>
   </div>

@@ -49,7 +49,11 @@ echo "== create channel =="
 curl -s -b "$CJ" -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   -X POST "$B/api/channels" -d '{"name":"Main Channel","chat_id":"@main_channel","enabled":true}' \
   -o /tmp/ch.json -w "channel=%{http_code}\n"
-CH=$(python3 -c "import json;print(json.load(open('/tmp/ch.json'))['id'])")
+# Re-runnable: reuse the existing channel when it is already present.
+CH=$(python3 -c "import json;print(json.load(open('/tmp/ch.json')).get('id',''))")
+if [ -z "$CH" ]; then
+  CH=$(curl -s -b "$CJ" "$B/api/channels" | python3 -c "import sys,json;print(next(c['id'] for c in json.load(sys.stdin)['channels'] if c['chat_id']=='@main_channel'))")
+fi
 echo "channel id: $CH"
 
 echo "== create schedule =="
@@ -57,7 +61,10 @@ curl -s -b "$CJ" -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
   -X POST "$B/api/schedules" \
   -d "{\"channel_id\":\"$CH\",\"type\":\"times\",\"times\":[\"08:00\",\"14:00\",\"20:00\"],\"timezone\":\"Asia/Riyadh\",\"question_selection\":\"sequential\",\"questions_per_day\":3,\"enabled\":true,\"name\":\"جدول رئيسي\"}" \
   -o /tmp/sch.json -w "schedule=%{http_code}\n"
-SCH=$(python3 -c "import json;print(json.load(open('/tmp/sch.json'))['id'])")
+SCH=$(python3 -c "import json;print(json.load(open('/tmp/sch.json')).get('id',''))")
+if [ -z "$SCH" ]; then
+  SCH=$(curl -s -b "$CJ" "$B/api/schedules" | python3 -c "import sys,json;print(next(s['id'] for s in json.load(sys.stdin)['schedules'] if s['channel_id']=='$CH'))")
+fi
 echo "schedule id: $SCH"
 
 echo "== publish now (dry-run) =="

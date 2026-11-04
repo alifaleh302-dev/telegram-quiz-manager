@@ -244,6 +244,11 @@ class Storage:
             {"version": 1, "users": []},
             backup_dir=self.backup_dir,
         )
+        self.secrets = JsonStore(
+            self.data_dir / "secrets.json",
+            {"version": 1, "telegram_bot_token": None, "telegram_bot_token_updated_at": None},
+            backup_dir=self.backup_dir,
+        )
         self.audit = JsonStore(
             self.data_dir / "audit_log.json",
             {"version": 1, "entries": []},
@@ -258,5 +263,6 @@ class Storage:
             "history": self.history,
             "settings": self.settings,
             "users": self.users,
+            "secrets": self.secrets,
             "audit_log": self.audit,
         }

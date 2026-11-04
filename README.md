@@ -36,15 +36,23 @@ python run.py            # أو: uvicorn app.main:app --host 0.0.0.0 --port 8000
 ثم افتح <http://localhost:8000> وسجّل الدخول ببيانات `ADMIN_USERNAME` / `ADMIN_PASSWORD`
 من ملف `.env`.
 
-**وضع تجريبي:** إذا كان `TELEGRAM_BOT_TOKEN` فارغاً يعمل النظام كاملاً دون إرسال أي رسالة
-فعلية — تُسجَّل العمليات في السجل كأنها نجحت مع وسم «تجريبي». هذا مفيد لتجربة الجدولة.
+**وضع تجريبي:** إذا لم يوجد توكن للبوت (لا في `.env` ولا في الإعدادات) يعمل النظام كاملاً
+دون إرسال أي رسالة فعلية — تُسجَّل العمليات في السجل كأنها نجحت مع وسم «تجريبي».
+هذا مفيد لتجربة الجدولة.
 
 ### ربط البوت الحقيقي
 
 1. أنشئ بوتاً عبر [@BotFather](https://t.me/BotFather) وخذ التوكن.
 2. أضف البوت إلى القناة **كمشرف** مع صلاحيتي «نشر الرسائل» و«إدارة الاستطلاعات».
-3. ضع التوكن في `TELEGRAM_BOT_TOKEN` داخل `.env` وأعد تشغيل الخادم.
+3. أدخل التوكن في **صفحة «الإعدادات» ← حالة البوت والتوكن ← حفظ التوكن**، أو ضعه في
+   `TELEGRAM_BOT_TOKEN` داخل `.env` وأعد تشغيل الخادم. التوكن المحفوظ من اللوحة يتقدّم
+   على قيمة `.env`.
 4. من صفحة «القنوات» أضف القناة (مثال: `@my_channel` أو `-1001234567890`) واضغط «اختبار».
+
+> **تخزين التوكن:** يُحفظ مشفَّراً في `data/secrets.json` بمفتاح مشتق من `SECRET_KEY`،
+> ولا يُعاد عرضه في أي استجابة — تُعرض آخر 4 محارف فقط. عند حفظه تُعاد تهيئة البوت
+> تلقائياً دون إعادة تشغيل الخادم. **تغيير `SECRET_KEY` يمنع فك تشفير التوكن المخزّن**،
+> وحينها أعد إدخاله من الإعدادات.
 
 ---
 
@@ -56,18 +64,18 @@ app/
 ├── core/
 │   ├── config.py           # الإعدادات من متغيرات البيئة
 │   ├── logging.py          # تسجيل موحّد إلى ملف ودوران الملفات
-│   └── security.py         # Argon2، جلسات موقّعة، رموز CSRF
+│   └── security.py         # Argon2، جلسات موقّعة، CSRF، تشفير الأسرار (Fernet)
 ├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, settings, auth
-├── services/               # منطق العمل: questions, channels, schedules, publishing, settings, backup, audit
+├── services/               # منطق العمل: questions, channels, schedules, publishing, settings, secret_store, backup, audit
 ├── telegram/               # العميل (send_quiz / test_channel / get_me) ومدير البوت (polling/webhook)
 ├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler)
 ├── storage/                # JSON مع كتابة ذرّية وقفل ملفات + التحقق من الصحة
 ├── templates/              # واجهات Jinja2 (RTL عربية)
 └── static/                 # CSS و JavaScript
 
-data/      # questions / channels / schedules / publishing_history / settings / users / audit_log
+data/      # questions / channels / schedules / publishing_history / settings / users / secrets / audit_log
 logs/      # app.log
-tests/     # 103 اختباراً
+tests/     # 118 اختباراً
 tools/     # smoke_test.sh
 ```
 
@@ -104,6 +112,8 @@ tools/     # smoke_test.sh
 | POST | `/api/publishing/reconcile` | مراجعة العمليات غير المحسومة |
 | GET | `/api/history` | سجل النشر + الإحصاءات |
 | GET/PUT | `/api/settings` | الإعدادات |
+| GET/POST/DELETE | `/api/settings/telegram-token` | عرض/حفظ/حذف توكن البوت |
+| POST | `/api/settings/telegram-token/test` | اختبار صلاحية التوكن |
 | POST | `/api/settings/password` | تغيير كلمة المرور |
 | POST | `/api/backups/create` · `/api/export` | نسخة احتياطية / تصدير ZIP |
 | GET | `/healthz` | فحص الحالة |
@@ -130,7 +140,9 @@ tools/     # smoke_test.sh
 - **كلمة المرور** بـ Argon2id (مع ترقية تلقائية عند تغيّر البارامترات).
 - **الجلسات** ملفات موقّعة بـ itsdangerous، كوكي `HttpOnly` + `SameSite=Lax`، عمر محدود.
 - **CSRF** رمز لكل جلسة يُتحقق منه في كل عملية مُعدِّلة.
-- **الأسرار** (توكن البوت، `SECRET_KEY`) من متغيرات البيئة فقط — لا تُخزَّن في ملفات JSON.
+- **الأسرار** (`SECRET_KEY`) من متغيرات البيئة فقط. **توكن البوت** يمكن ضبطه من اللوحة
+  ويُخزَّن مشفَّراً (Fernet بمفتاح مشتق من `SECRET_KEY`) في `data/secrets.json` — لا يُكتب
+  كنص مكشوف ولا يُعاد عرضه، ويبقى `TELEGRAM_BOT_TOKEN` في `.env` بديلاً اختيارياً.
 - **التحقق من المدخلات** قبل أي كتابة، و**كتابة ذرّية** (ملف مؤقت + `os.replace`) مع قفل ملفات.
 - **الإعدادات** ترفض أي مفتاح غير معروف بدل تخزينه بصمت.
 

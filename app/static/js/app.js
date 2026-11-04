@@ -443,7 +443,66 @@ const TQM = (() => {
   }
 
   // ---------- Settings ----------
+  function revealToken(button) {
+    const input = document.querySelector('#tokenForm input[name="token"]');
+    if (!input) return;
+    const hidden = input.type === 'password';
+    input.type = hidden ? 'text' : 'password';
+    button.innerHTML = `<i class="bi bi-eye${hidden ? '-slash' : ''}"></i>`;
+  }
+
+  function initTokenForm() {
+    const form = document.getElementById('tokenForm');
+    if (!form) return;
+    const input = form.querySelector('input[name="token"]');
+    const result = document.getElementById('tokenResult');
+
+    const report = (ok, html) => {
+      result.innerHTML = `<div class="alert alert-${ok ? 'success' : 'danger'} small py-2 mb-0">${html}</div>`;
+    };
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const token = input.value.trim();
+      if (!token) { toast('أدخل التوكن أولاً.', 'warning'); return; }
+      const response = await api('/api/settings/telegram-token', {
+        method: 'POST', body: { token },
+      });
+      if (response.ok) {
+        report(true, `تم حفظ التوكن${response.data.restarted ? ' وتشغيل البوت' : ''}.`);
+        toast('تم حفظ التوكن');
+        input.value = '';
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        report(false, response.error);
+        toast(response.error, 'error');
+      }
+    });
+
+    document.getElementById('tokenTestBtn')?.addEventListener('click', async () => {
+      const button = document.getElementById('tokenTestBtn');
+      button.disabled = true;
+      const response = await api('/api/settings/telegram-token/test', {
+        method: 'POST', body: { token: input.value.trim() },
+      });
+      button.disabled = false;
+      if (response.ok && response.data.ok) {
+        report(true, `التوكن صالح — البوت @${response.data.username}`);
+      } else {
+        report(false, response.data?.error || response.error || 'فشل اختبار التوكن');
+      }
+    });
+
+    document.getElementById('tokenClearBtn')?.addEventListener('click', async () => {
+      if (!confirm('حذف التوكن المخزّن؟ سيعود النظام إلى وضع تجريبي إن لم يوجد توكن في .env.')) return;
+      const response = await api('/api/settings/telegram-token', { method: 'DELETE' });
+      if (response.ok) { toast('تم حذف التوكن المخزّن', 'warning'); setTimeout(() => window.location.reload(), 900); }
+      else toast(response.error, 'error');
+    });
+  }
+
   function initSettingsForms() {
+    initTokenForm();
     const settingsForm = document.getElementById('settingsForm');
     settingsForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -519,6 +578,6 @@ const TQM = (() => {
     initChannelForm, showChannelForm, hideChannelForm, testChannel, toggleChannel,
     setDefaultChannel, deleteChannel,
     initScheduleForm, showScheduleForm, hideScheduleForm, scheduleAction,
-    retryPublish, initSettingsForms, restoreBackup,
+    retryPublish, initSettingsForms, restoreBackup, revealToken,
   };
 })();

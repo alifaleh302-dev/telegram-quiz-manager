@@ -134,7 +134,7 @@ def render(
         "app_name": request.app.state.app_name,
         "session": session,
         "csrf_token": session.csrf_token if session else "",
-        "dry_run": request.app.state.services.settings.dry_run,
+        "dry_run": request.app.state.services.dry_run,
         "active_page": active_page_for(request.url.path),
     }
     payload.update(context or {})

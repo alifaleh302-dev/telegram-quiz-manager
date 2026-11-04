@@ -7,6 +7,8 @@ expiry check, so a leaked cookie cannot be forged or replayed forever.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
@@ -15,6 +17,7 @@ from typing import Any
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
+from cryptography.fernet import Fernet, InvalidToken
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.core.config import get_settings
@@ -27,6 +30,10 @@ CSRF_HEADER = "X-CSRF-Token"
 
 class AuthenticationError(Exception):
     """Raised when a session cookie is missing, invalid or expired."""
+
+
+class SecretDecryptionError(Exception):
+    """Raised when an encrypted secret cannot be decrypted with the current key."""
 
 
 # --- Passwords -------------------------------------------------------------
@@ -110,3 +117,41 @@ def verify_csrf(session: Session, submitted: str | None) -> bool:
     if not submitted:
         return False
     return hmac.compare_digest(session.csrf_token, submitted)
+
+
+# --- Secret encryption -----------------------------------------------------
+# Stored secrets (currently the Telegram bot token) are encrypted with a key
+# derived from ``SECRET_KEY``, so the JSON file never holds the token in clear
+# and a copy of the data directory alone is not enough to recover it.
+
+def _fernet() -> Fernet:
+    secret = get_settings().secret_key
+    if not secret:
+        raise SecretDecryptionError(
+            "SECRET_KEY غير مضبوط؛ لا يمكن تشفير الأسرار المخزّنة."
+        )
+    digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_secret(value: str) -> str:
+    return _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+
+
+def decrypt_secret(token: str) -> str:
+    try:
+        return _fernet().decrypt(token.encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError) as exc:
+        raise SecretDecryptionError(
+            "تعذّر فك تشفير السر؛ قد تكون SECRET_KEY قد تغيّرت."
+        ) from exc
+
+
+def mask_secret(value: str, *, visible: int = 4) -> str:
+    """Render a secret for display without revealing it."""
+    value = value or ""
+    if not value:
+        return ""
+    if len(value) <= visible:
+        return "•" * len(value)
+    return "•" * (len(value) - visible) + value[-visible:]
