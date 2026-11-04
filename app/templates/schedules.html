@@ -52,6 +52,13 @@
             {% set sels = {'sequential':'تصاعدي','random':'عشوائي','category':'حسب التصنيف'} %}
             {{ sels.get(schedule.question_selection, schedule.question_selection) }}
           </dd></div>
+          <div><dt>في كل مرة</dt><dd>
+            {% set n = schedule.questions_per_run or 1 %}
+            {% if n == 1 %}سؤال واحد{% elif n == 2 %}سؤالان{% else %}{{ n }} أسئلة{% endif %}
+            {% if n > 1 and schedule.batch_interval_seconds %}
+              <span class="hint">(بفارق {{ schedule.batch_interval_seconds }} ثانية)</span>
+            {% endif %}
+          </dd></div>
           <div><dt>المنطقة الزمنية</dt><dd>{{ schedule.timezone }}</dd></div>
           <div><dt>الموعد القادم</dt><dd>{{ schedule.next_run_at or '—' }}</dd></div>
           <div><dt>نُشر بواسطته</dt><dd>{{ schedule.published_count }}</dd></div>
@@ -164,6 +171,16 @@
       <div class="col-md-3">
         <label class="form-label">عدد الأسئلة اليومية <span class="hint">(0 = غير محدود)</span></label>
         <input class="form-control" type="number" name="questions_per_day" value="0" min="0">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">عدد الأسئلة في كل مرة</label>
+        <input class="form-control" type="number" name="questions_per_run" value="1" min="1" max="10">
+        <div class="form-text">كم سؤالاً يُرسل عند كل موعد.</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">الفارق الزمني بين الأسئلة (ثانية)</label>
+        <input class="form-control" type="number" name="batch_interval_seconds" value="0" min="0" max="3600">
+        <div class="form-text">يُستخدم عند إرسال أكثر من سؤال. 0 = بدون فاصل.</div>
       </div>
       <div class="col-md-3">
         <label class="form-label">المنطقة الزمنية</label>

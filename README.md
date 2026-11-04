@@ -15,7 +15,7 @@
 | بنك الأسئلة | إضافة، تعديل، حذف، نسخ، بحث، تصفية (تصنيف/حالة/صعوبة)، إجراءات جماعية، معاينة، استيراد وتصدير JSON |
 | محرر السؤال | خيارات ديناميكية (2–10)، اختيار الإجابة الصحيحة، شرح، تصنيف، صعوبة، حالة، معاينة مباشرة |
 | القنوات | إضافة/حذف، قناة افتراضية، تفعيل/تعطيل، اختبار النشر، آخر عملية ناجحة |
-| الجدولة | يومي، عدة مرات يومياً، أيام محددة، فاصل زمني، تاريخ محدد، يدوي فقط + نافذة بداية/نهاية ومنطقة زمنية |
+| الجدولة | يومي، عدة مرات يومياً، أيام محددة، فاصل زمني، تاريخ محدد، يدوي فقط + عدد الأسئلة في كل مرة وفارق زمني بينها، ونافذة بداية/نهاية ومنطقة زمنية |
 | سجل النشر | كل محاولة: السؤال، القناة، الوقت، الحالة، Message ID، الخطأ، عدد المحاولات + إعادة المحاولة يدوياً |
 | الإحصائيات | تفاعل الأعضاء مع كل سؤال في كل قناة: عدد التصويتات، نسبة المشاركة، نسبة الإجابات الصحيحة، تفصيل الخيارات، ورسم للنشاط اليومي |
 | الإعدادات | إعدادات النشر، إعدادات الإحصائيات، كلمة المرور، سجل تسجيل الدخول، النسخ الاحتياطي والاستعادة والتصدير ZIP |
@@ -76,7 +76,7 @@ app/
 
 data/      # questions / channels / schedules / publishing_history / poll_results / poll_answers / settings / users / secrets / audit_log
 logs/      # app.log
-tests/     # 139 اختباراً
+tests/     # 144 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 examples/  # questions.sample.json (نموذج استيراد)
 ```
@@ -159,7 +159,7 @@ examples/  # questions.sample.json (نموذج استيراد)
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 139 اختباراً
+python -m pytest              # 144 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
@@ -183,11 +183,16 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
 // data/schedules.json
 {"schedules": [{"id": "SCH001", "channel_id": "CH001", "enabled": true,
   "type": "times", "times": ["08:00","14:00","20:00"], "timezone": "Asia/Riyadh",
-  "question_selection": "sequential", "questions_per_day": 3}]}
+  "question_selection": "sequential", "questions_per_day": 3,
+  "questions_per_run": 2, "batch_interval_seconds": 30}]}
 ```
 
 أنواع الجدولة: `daily` · `times` · `weekdays` · `interval` · `once` · `manual`.
 طرق اختيار الأسئلة: `sequential` · `random` · `category`.
+
+عند كل موعد ينشر الجدول **`questions_per_run`** سؤالاً (1–10) لا يتجاوز ما تبقّى
+من `questions_per_day`، ويفصل بينها **`batch_interval_seconds`** ثانية (0–3600).
+القيمة 0 تعني الإرسال دفعة واحدة دون فاصل.
 
 الملفان `data/poll_results.json` و`data/poll_answers.json` يحفظان إحصاءات
 التفاعل: الأول صف لكل استطلاع (أحدث قراءة للأعداد)، والثاني إجابة كل عضو

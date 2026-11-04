@@ -106,6 +106,55 @@ async def test_runner_publishes_first_ready_question(services, fake_telegram) ->
     assert fake_telegram.sent[0]["question"]["question"] == "question 0"
 
 
+async def test_runner_publishes_a_batch_per_run(services, fake_telegram) -> None:
+    _make_ready(services, 5)
+    schedule = _schedule(services, questions_per_run=3)
+    result = await services.runner.run(schedule["id"])
+    assert result["ok"] is True
+    assert result["published"] == 3
+    assert len(fake_telegram.sent) == 3
+    assert [s["question"]["question"] for s in fake_telegram.sent] == [
+        "question 0", "question 1", "question 2",
+    ]
+    updated = services.schedules.get(schedule["id"])
+    assert updated["cursor"] == 3
+    assert updated["published_count"] == 3
+
+
+async def test_runner_waits_between_batch_questions(services, monkeypatch) -> None:
+    _make_ready(services, 3)
+    schedule = _schedule(services, questions_per_run=2, batch_interval_seconds=4)
+
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.scheduler.jobs.asyncio.sleep", _fake_sleep)
+    await services.runner.run(schedule["id"])
+
+    # Only the gap *between* questions is awaited, not before the first one.
+    assert slept == [4]
+
+
+async def test_runner_batch_does_not_exceed_daily_limit(services, fake_telegram) -> None:
+    _make_ready(services, 5)
+    schedule = _schedule(services, questions_per_run=3, questions_per_day=2)
+    result = await services.runner.run(schedule["id"])
+    assert result["published"] == 2
+    assert len(fake_telegram.sent) == 2
+    second = await services.runner.run(schedule["id"])
+    assert second["reason"] == "schedule-daily-limit"
+
+
+async def test_runner_batch_stops_at_available_questions(services, fake_telegram) -> None:
+    _make_ready(services, 2)
+    schedule = _schedule(services, questions_per_run=5)
+    result = await services.runner.run(schedule["id"])
+    assert result["published"] == 2
+    assert len(fake_telegram.sent) == 2
+
+
 async def test_runner_advances_cursor_on_success(services) -> None:
     _make_ready(services, 3)
     schedule = _schedule(services)

@@ -290,6 +290,56 @@ def test_full_schedule_lifecycle(app_client) -> None:
     assert app_client.delete(f"/api/schedules/{schedule_id}", headers=headers).status_code == 200
 
 
+def test_schedule_batch_fields_roundtrip(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    channel = app_client.post(
+        "/api/channels",
+        json={"name": "Main", "chat_id": "@main_channel", "enabled": True},
+        headers=headers,
+    ).json()
+
+    created = app_client.post(
+        "/api/schedules",
+        json={
+            "channel_id": channel["id"],
+            "type": "times",
+            "times": ["08:00", "20:00"],
+            "questions_per_run": 4,
+            "batch_interval_seconds": 90,
+        },
+        headers=headers,
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["questions_per_run"] == 4
+    assert body["batch_interval_seconds"] == 90
+
+    bad = app_client.post(
+        "/api/schedules",
+        json={
+            "channel_id": channel["id"],
+            "type": "daily",
+            "times": ["20:00"],
+            "questions_per_run": 0,
+        },
+        headers=headers,
+    )
+    assert bad.status_code == 400
+
+    bad_gap = app_client.post(
+        "/api/schedules",
+        json={
+            "channel_id": channel["id"],
+            "type": "daily",
+            "times": ["20:00"],
+            "batch_interval_seconds": 5000,
+        },
+        headers=headers,
+    )
+    assert bad_gap.status_code == 400
+
+
 def test_publish_now_requires_ready_question(app_client) -> None:
     _login(app_client)
     headers = {"X-CSRF-Token": _csrf(app_client)}

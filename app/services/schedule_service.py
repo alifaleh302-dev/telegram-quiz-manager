@@ -140,6 +140,7 @@ class ScheduleService:
         *,
         next_run_at: str | None = None,
         advance: bool = False,
+        advance_by: int = 1,
     ) -> None:
         def _mutate(document: dict[str, Any]) -> None:
             for schedule in document["schedules"]:
@@ -147,9 +148,10 @@ class ScheduleService:
                     schedule["last_run_at"] = utc_now_iso()
                     schedule["next_run_at"] = next_run_at
                     if advance:
-                        schedule["cursor"] = int(schedule.get("cursor", 0)) + 1
+                        step = max(0, int(advance_by))
+                        schedule["cursor"] = int(schedule.get("cursor", 0)) + step
                         schedule["published_count"] = (
-                            int(schedule.get("published_count", 0)) + 1
+                            int(schedule.get("published_count", 0)) + step
                         )
 
         self._storage.schedules.update(_mutate)

@@ -6,6 +6,7 @@ Kept separate from the APScheduler wiring so it can be unit-tested by calling
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -18,6 +19,11 @@ from app.services.settings_service import SettingsService
 from app.storage.validators import ValidationError
 
 logger = get_logger(__name__)
+
+# A single firing spaces its questions out, but the total wait is bounded so the
+# job (and a manual "run now" HTTP request) can never hang for minutes. Larger
+# spacing belongs to the ``interval`` schedule type instead.
+MAX_BATCH_WAIT_SECONDS = 120
 
 
 def _today_iso() -> str:
@@ -112,6 +118,13 @@ class ScheduleRunner:
             )
             return {"ok": False, "reason": "global-daily-limit"}
 
+        batch_size = max(1, int(schedule.get("questions_per_run") or 1))
+        gap = max(0, int(schedule.get("batch_interval_seconds") or 0))
+
+        # A single run must not exceed the schedule's daily allowance.
+        remaining = per_day - self._published_today(schedule) if per_day else batch_size
+        target = max(1, min(batch_size, remaining)) if per_day else batch_size
+
         channel = schedule["channel_id"]
         candidates = self._questions.pick_candidates(
             selection=schedule.get("question_selection", "sequential"),
@@ -126,32 +139,68 @@ class ScheduleRunner:
             )
             return {"ok": False, "reason": "no-questions"}
 
-        question = candidates[0]
-        try:
-            entry = await self._publishing.publish(
-                question["id"],
-                channel,
-                schedule_id=schedule_id,
-                trigger=trigger,
-            )
-        except ValidationError as exc:
-            logger.info("schedule %s skipped: %s", schedule_id, exc)
-            return {"ok": False, "reason": str(exc)}
+        published = 0
+        failures = 0
+        last_question_id = ""
+        waited = 0.0
+        for index, question in enumerate(candidates[:target]):
+            if index and gap and waited < MAX_BATCH_WAIT_SECONDS:
+                delay = min(gap, MAX_BATCH_WAIT_SECONDS - waited)
+                waited += delay
+                await asyncio.sleep(delay)
+            if global_limit and self._published_today_global() >= global_limit:
+                break
+            last_question_id = question["id"]
+            try:
+                entry = await self._publishing.publish(
+                    question["id"],
+                    channel,
+                    schedule_id=schedule_id,
+                    trigger=trigger,
+                )
+            except ValidationError as exc:
+                logger.info("schedule %s skipped %s: %s", schedule_id, question["id"], exc)
+                continue
 
-        advanced = entry["status"] == "success"
-        self._schedules.record_run(schedule_id, advance=advanced)
+            if entry["status"] == "success":
+                published += 1
+            else:
+                failures += 1
 
-        # Retry policy: queue a follow-up when the failure is transient.
-        if entry["status"] == "failed" and entry.get("retryable"):
+            # Retry policy: queue a follow-up when the failure is transient.
+            if entry["status"] == "failed" and entry.get("retryable"):
+                self._audit.record(
+                    "publishing.retry_scheduled",
+                    level="warning",
+                    message=(
+                        f"سيُعاد محاولة نشر {question['id']} وفق سياسة إعادة المحاولة "
+                        f"(المحاولة {entry['attempts']})."
+                    ),
+                )
+
+        self._schedules.record_run(
+            schedule_id, advance=published > 0, advance_by=published
+        )
+
+        if published > 1:
             self._audit.record(
-                "publishing.retry_scheduled",
-                level="warning",
+                "schedule.batch_published",
                 message=(
-                    f"سيُعاد محاولة نشر {question['id']} وفق سياسة إعادة المحاولة "
-                    f"(المحاولة {entry['attempts']})."
+                    f"نُشرت {published} أسئلة دفعة واحدة للجدول {schedule_id}"
+                    + (f" بفارق {gap} ثانية." if gap else ".")
                 ),
+                schedule_id=schedule_id,
             )
-        return {"ok": advanced, "status": entry["status"], "question_id": question["id"]}
+
+        return {
+            "ok": published > 0,
+            "published": published,
+            "failed": failures,
+            "requested": target,
+            "gap_seconds": gap,
+            "question_id": last_question_id,
+            "reason": None if published else "publish-failed",
+        }
 
 
 def weekdays_to_cron(days: list[int]) -> str:

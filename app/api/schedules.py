@@ -24,6 +24,8 @@ class ScheduleIn(BaseModel):
     question_selection: str = "sequential"
     category_filter: str = ""
     questions_per_day: int = 0
+    questions_per_run: int = 1
+    batch_interval_seconds: int = 0
     start_date: str = ""
     end_date: str = ""
     name: str = ""

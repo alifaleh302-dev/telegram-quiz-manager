@@ -400,6 +400,8 @@ const TQM = (() => {
         question_selection: formData.get('question_selection') || 'sequential',
         category_filter: formData.get('category_filter') || '',
         questions_per_day: Number(formData.get('questions_per_day') || 0),
+        questions_per_run: Number(formData.get('questions_per_run') || 1),
+        batch_interval_seconds: Number(formData.get('batch_interval_seconds') || 0),
         start_date: formData.get('start_date') || '',
         end_date: formData.get('end_date') || '',
       };
@@ -435,6 +437,9 @@ const TQM = (() => {
     if (result.ok) {
       if (action === 'run-now' && !result.data.ok) {
         toast(result.data.result?.reason || 'لم يتم النشر', 'warning');
+      } else if (action === 'run-now') {
+        const published = result.data.result?.published ?? 1;
+        toast(`تم نشر ${published} سؤال`);
       } else {
         toast(`${labels[action]}: تم`);
       }

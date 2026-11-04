@@ -165,6 +165,23 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if per_day < 0:
         raise ValidationError("عدد الأسئلة اليومية لا يمكن أن يكون سالباً.")
 
+    raw_per_run = payload.get("questions_per_run")
+    if raw_per_run in (None, ""):
+        raw_per_run = 1
+    try:
+        per_run = int(raw_per_run)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("عدد الأسئلة في كل مرة غير صالح.") from exc
+    if not 1 <= per_run <= MAX_OPTIONS:
+        raise ValidationError(f"عدد الأسئلة في كل مرة يجب أن يكون بين 1 و {MAX_OPTIONS}.")
+
+    try:
+        batch_interval = int(payload.get("batch_interval_seconds") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("الفارق الزمني بين الأسئلة غير صالح.") from exc
+    if not 0 <= batch_interval <= 3600:
+        raise ValidationError("الفارق الزمني يجب أن يكون بين 0 و 3600 ثانية.")
+
     category_filter = _clean_text(
         payload.get("category_filter"), "تصنيف الأسئلة", max_length=60, required=False
     )
@@ -199,6 +216,8 @@ def validate_schedule_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "question_selection": selection,
         "category_filter": category_filter,
         "questions_per_day": per_day,
+        "questions_per_run": per_run,
+        "batch_interval_seconds": batch_interval,
         "start_date": start_date,
         "end_date": end_date,
         "name": _clean_text(
