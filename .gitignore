@@ -33,3 +33,6 @@ htmlcov/
 
 # === Lock files created at runtime ===
 *.lock
+
+# === Agent workspace metadata ===
+.openhands/
