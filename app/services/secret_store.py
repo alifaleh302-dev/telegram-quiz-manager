@@ -1,8 +1,8 @@
 """Encrypted storage for runtime-editable secrets (the Telegram bot token).
 
 The token can be set from the dashboard, so it has to live somewhere durable.
-It is kept out of ``settings.json`` and stored encrypted in ``secrets.json``,
-using a key derived from ``SECRET_KEY`` (see :mod:`app.core.security`). The raw
+It is kept out of the general settings and stored encrypted in the ``secrets``
+collection, using a key derived from ``SECRET_KEY`` (see :mod:`app.core.security`). The raw
 value is never returned by the API or written to the log; only a masked form is
 exposed for display.
 """
@@ -19,7 +19,7 @@ from app.core.security import (
     mask_secret,
 )
 from app.services.audit_service import AuditService
-from app.storage.json_manager import Storage, utc_now_iso
+from app.storage.sqlite_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
 # A Telegram bot token is "<numeric id>:<35 url-safe chars>".

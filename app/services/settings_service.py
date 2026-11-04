@@ -9,7 +9,7 @@ from typing import Any
 
 from app.core.timezones import is_valid_timezone
 from app.services.audit_service import AuditService
-from app.storage.json_manager import Storage
+from app.storage.sqlite_manager import Storage
 from app.storage.validators import ValidationError
 
 _EDITABLE_KEYS = {

@@ -18,7 +18,7 @@ from app.services.secret_store import SecretStore
 from app.services.settings_service import SettingsService
 from app.services.user_service import UserService
 from app.services.userbot_service import UserbotAccountService
-from app.storage.json_manager import Storage
+from app.storage.sqlite_manager import Storage
 from app.telegram.bot import BotManager
 from app.telegram.telegram_client import TelegramClient
 from app.telegram.transport import TransportRouter

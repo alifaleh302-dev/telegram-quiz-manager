@@ -52,7 +52,8 @@ python run.py            # أو: uvicorn app.main:app --host 0.0.0.0 --port 8000
    على قيمة `.env`.
 4. من صفحة «القنوات» أضف القناة (مثال: `@my_channel` أو `-1001234567890`) واضغط «اختبار».
 
-> **تخزين التوكن:** يُحفظ مشفَّراً في `data/secrets.json` بمفتاح مشتق من `SECRET_KEY`،
+> **تخزين التوكن:** يُحفظ مشفَّراً في قاعدة البيانات `data/tqm.db` (جدول `documents`
+> للمجموعة `secrets`) بمفتاح مشتق من `SECRET_KEY`،
 > ولا يُعاد عرضه في أي استجابة — تُعرض آخر 4 محارف فقط. عند حفظه تُعاد تهيئة البوت
 > تلقائياً دون إعادة تشغيل الخادم. **تغيير `SECRET_KEY` يمنع فك تشفير التوكن المخزّن**،
 > وحينها أعد إدخاله من الإعدادات.
@@ -73,19 +74,23 @@ app/
 ├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, users, secret_store, userbot, backup, audit
 ├── telegram/               # ناقلات النشر: عميل البوت (Bot API)، عميل userbot (MTProto)، الموجِّه (transport)، ومدير البوت (polling/webhook)
 ├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler)
-├── storage/                # JSON مع كتابة ذرّية وقفل ملفات + التحقق من الصحة
+├── storage/                # SQLite (اتصال واحد + معاملات ذرّية) + التحقق من الصحة
 ├── templates/              # واجهات Jinja2 (RTL عربية)
 └── static/                 # CSS و JavaScript
 
-data/      # questions / channels / schedules / publishing_history / poll_results / poll_answers / userbot_accounts / settings / users / secrets / audit_log
+data/      # tqm.db (قاعدة بيانات SQLite واحدة: questions / channels / schedules /
+           #   publishing_history / poll_results / poll_answers / userbot_accounts /
+           #   settings / users / secrets / audit_log) + backups/
 logs/      # app.log
-tests/     # 212 اختباراً
+tests/     # 277 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 examples/  # questions.sample.json (نموذج استيراد)
 ```
 
-**لماذا JSON؟** لتفادي قاعدة بيانات ثقيلة على سيرفر صغير. الطبقة معزولة داخل
-`storage/`، لذا يمكن استبدالها بـ SQLite لاحقاً دون تغيير الخدمات أو الواجهات.
+**لماذا SQLite؟** قاعدة بيانات ملف واحد، بلا خادم، مع معاملات ذرّية ونسخ احتياطي
+بنسخة واحدة (`VACUUM INTO`). الطبقة معزولة داخل `storage/`، وواجهة القراءة/التعديل
+نفسها التي كانت للـ JSON، لذا لم تتغيّر الخدمات أو الواجهات. عند أول تشغيل تُستورد
+ملفات JSON القديمة من `data/` تلقائياً إلى قاعدة البيانات (مرة واحدة فقط).
 
 ---
 
@@ -237,9 +242,9 @@ examples/  # questions.sample.json (نموذج استيراد)
 
 ### ضمانات وأمان
 
-- تُخزَّن `api_id` و`api_hash` والجلسة **مشفَّرة** في `data/secrets.json` بمفتاح مشتق من
-  `SECRET_KEY`، ولا تُعاد أبداً في أي استجابة (تُعرض masked فقط). ملف
-  `data/userbot_accounts.json` يحتوي على البيانات الوصفية فقط.
+- تُخزَّن `api_id` و`api_hash` والجلسة **مشفَّرة** في قاعدة البيانات `data/tqm.db`
+  (مجموعة `secrets`) بمفتاح مشتق من `SECRET_KEY`، ولا تُعاد أبداً في أي استجابة (تُعرض
+  masked فقط). مجموعة `userbot_accounts` تحتوي على البيانات الوصفية فقط.
 - الجلسة تُمثّل صلاحية كاملة على الحساب؛ تعامل معها ككلمة مرور. تغيير `SECRET_KEY`
   يجعلها غير قابلة للفك، فسجّل الدخول من جديد.
 - عند تعيين قناة على `userbot` دون حساب جاهز يفشل النشر بخطأ واضح في السجل بدلاً من
@@ -256,9 +261,10 @@ examples/  # questions.sample.json (نموذج استيراد)
 - **الجلسات** ملفات موقّعة بـ itsdangerous، كوكي `HttpOnly` + `SameSite=Lax`، عمر محدود.
 - **CSRF** رمز لكل جلسة يُتحقق منه في كل عملية مُعدِّلة.
 - **الأسرار** (`SECRET_KEY`) من متغيرات البيئة فقط. **توكن البوت** يمكن ضبطه من اللوحة
-  ويُخزَّن مشفَّراً (Fernet بمفتاح مشتق من `SECRET_KEY`) في `data/secrets.json` — لا يُكتب
+  ويُخزَّن مشفَّراً (Fernet بمفتاح مشتق من `SECRET_KEY`) في قاعدة البيانات `data/tqm.db` — لا يُكتب
   كنص مكشوف ولا يُعاد عرضه، ويبقى `TELEGRAM_BOT_TOKEN` في `.env` بديلاً اختيارياً.
-- **التحقق من المدخلات** قبل أي كتابة، و**كتابة ذرّية** (ملف مؤقت + `os.replace`) مع قفل ملفات.
+- **التحقق من المدخلات** قبل أي كتابة، و**معاملات ذرّية** في SQLite (كل تعديل داخل
+  `BEGIN IMMEDIATE`) مع نسخة احتياطية تلقائية قبل العمليات المهمة.
 - **الإعدادات** ترفض أي مفتاح غير معروف بدل تخزينه بصمت.
 - **صلاحيات متعددة المستخدمين**: كل `/api/*` يتحقق من صلاحية الحساب (`require_permission`)،
   وإعدادات النظام وإدارة المستخدمين مقصورة على دور `admin`. حساب المدير الأخير لا يمكن
@@ -276,28 +282,40 @@ examples/  # questions.sample.json (نموذج استيراد)
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 212 اختباراً
+python -m pytest              # 277 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
 
-تغطي الاختبارات: التخزين الذرّي والنسخ الاحتياطي، التحقق من صحة الأسئلة، الأمان وCSRF،
+تغطي الاختبارات: تخزين SQLite والمعاملات الذرّية والنسخ الاحتياطي والهجرة من JSON، التحقق من صحة الأسئلة، الأمان وCSRF،
 الجدولة (بناء المحفّزات وحدود النشر)، دورة النشر، وضمانات إعادة التشغيل، وواجهات API كاملة
 عبر `TestClient`. الشبكة الوحيدة المُستبدلة في الاختبارات هي Telegram.
 
 ---
 
-## 8. هيكل ملفات البيانات
+## 8. هيكل تخزين البيانات
+
+كل البيانات في قاعدة بيانات SQLite واحدة: `data/tqm.db`. لكل مجموعة (collection)
+جدولها، فالتعديل على مجموعة لا يعيد كتابة غيرها:
+
+- `documents(key, value, updated_at)` — الجزء القياسي من كل مجموعة (`version`,
+  `counter`, `timezone`, ...) مخزَّن كـ JSON في صف واحد لكل مجموعة.
+- جدول لكل مجموعة قوائم (`questions`, `channels`, `schedules`, `history`,
+  `audit_log`, `poll_results`, `poll_answers`, `userbot_accounts`) بعمودَي
+  `id` و`idx` (لحفظ الترتيب) و`value` (العنصر كـ JSON).
+
+القراءة/التعديل يمرّان عبر واجهة واحدة: `read()` يعيد نسخة كاملة من المجموعة،
+و`update(mutator)` يقرأ ويعدّل ويكتب داخل معاملة `BEGIN IMMEDIATE` واحدة (ذرّية).
 
 ```json
-// data/questions.json
+// مجموعة questions (تُعاد ككائن واحد كما كان ملف JSON)
 {"version": 1, "counter": 5, "questions": [
   {"id": "Q0001", "question": "...", "options": ["..."], "correct_option_id": 1,
    "explanation": "...", "category": "...", "difficulty": "easy",
    "status": "ready", "created_at": "...", "updated_at": "..."}
 ]}
 
-// data/schedules.json
+// مجموعة schedules
 {"schedules": [{"id": "SCH001", "channel_id": "CH001", "enabled": true,
   "type": "times", "times": ["08:00","14:00","20:00"], "timezone": "Asia/Riyadh",
   "question_selection": "sequential", "questions_per_day": 3,
@@ -321,8 +339,8 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
   "times": ["20:00"], "queue": ["Q0007", "Q0012"], "questions_per_run": 2}
 ```
 
-الملفان `data/poll_results.json` و`data/poll_answers.json` يحفظان إحصاءات
-التفاعل: الأول صف لكل استطلاع (أحدث قراءة للأعداد)، والثاني إجابة كل عضو
+المجموعتان `poll_results` و`poll_answers` تحفظان إحصاءات
+التفاعل: الأولى صف لكل استطلاع (أحدث قراءة للأعداد)، والثانية إجابة كل عضو
 عندما يكون الاستطلاع غير مجهول.
 
 ---
@@ -411,6 +429,23 @@ curl -X POST http://localhost:8000/api/questions/import-file \
 
 ---
 
+## 8.2 النسخ الاحتياطي والاستعادة والتصدير
+
+- **نسخة احتياطية داخلية:** كل مجلد داخل `data/backups/` يحوي نسخة كاملة من قاعدة
+  البيانات (`tqm.db`) مأخوذة بـ `VACUUM INTO` — نسخة متّسقة حتى أثناء عمل الخادم.
+  تُنشأ نسخة تلقائياً قبل عمليات الاستعادة.
+- **تصدير ZIP** (`GET /api/export`): أرشيف يحوي `tqm.db`.
+- **استعادة ZIP** (`POST /api/import/restore`): تقبل أرشيف النسخة الحالي (`tqm.db`)
+  أو أرشيفاً قديماً من نسخة JSON (تُدمج ملفاته في قاعدة البيانات)، مع أخذ نسخة قبلية أولاً.
+- **استعادة نسخة داخلية** (`POST /api/backups/restore/{name}`): تستبدل قاعدة البيانات
+  بنسخة محفوظة.
+
+> **الهجرة من JSON:** عند أول تشغيل لا تجد فيه قاعدة البيانات بيانات، تُستورد ملفات
+> `data/*.json` القديمة تلقائياً إلى `data/tqm.db` (مرة واحدة فقط، ولا تُكتب فوق بيانات
+> موجودة). لا حاجة لأي خطوة يدوية.
+
+---
+
 ## 9. إحصاءات التفاعل وقيود Telegram
 
 تعتمد صفحة **الإحصائيات** على واجهة Telegram Bot API، وهناك قيدان مهمّان
@@ -439,3 +474,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 
 > **مهم:** استخدم عاملاً واحداً (`--workers 1`). المجدول وحالة النشر تعمل داخل العملية،
 > وتشغيل عدة عمليات سيؤدي إلى نشر مكرر. للتوسّع أفقياً، افصل المجدول في خدمة مستقلة.
+
+> **تخزين دائم على المنصّات (Railway وغيرها):** قاعدة البيانات ملف واحد (`data/tqm.db`).
+> على منصّة بلا قرص دائم يُفقد الملف عند إعادة النشر. اربط **Volume** واجعل مسار البيانات
+> داخله، مثال: `APP_BASE_DIR=/data` (فتصبح القاعدة `/data/data/tqm.db`)، ثم اضبط
+> `SECRET_KEY` ثابتاً وإلا تعذّر فك تشفير التوكن المخزَّن. للترحيل: صدّر ZIP من
+> **الإعدادات ← نسخ احتياطي** ثم استورده بعد ربط القرص.

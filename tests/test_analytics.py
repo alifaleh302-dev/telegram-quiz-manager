@@ -255,8 +255,9 @@ async def test_legacy_rows_without_poll_id_join_by_message(
 
     # A poll_results row collected earlier, plus a history row that predates the
     # poll_id field: the two must still join on (channel_id, message_id).
-    services.storage.poll_results.update(
-        lambda doc: doc["results"].append(
+    def _insert_legacy(document):
+        document["counter"] = 1
+        document["results"].append(
             {
                 "id": "PR00001",
                 "poll_id": "legacy-poll",
@@ -275,7 +276,8 @@ async def test_legacy_rows_without_poll_id_join_by_message(
                 "trigger": "manual",
             }
         )
-    )
+
+    services.storage.poll_results.update(_insert_legacy)
     services.storage.history.update(
         lambda doc: [e.update({"poll_id": None}) for e in doc["history"]]
     )

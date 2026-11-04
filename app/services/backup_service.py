@@ -1,30 +1,30 @@
-"""Backup and restore of the JSON data files."""
+"""Backup and restore of the SQLite database.
+
+A snapshot is a consistent copy of ``data/tqm.db`` produced with ``VACUUM INTO``
+while the app is running. The export/import endpoints speak the same ZIP format
+as before, so an archive downloaded from an older version (a bag of ``*.json``
+files) can still be restored: those files are merged back through the normal
+storage layer.
+"""
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
+import tempfile
 import zipfile
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.services.audit_service import AuditService
-from app.storage.json_manager import Storage
+from app.storage.sqlite_manager import LEGACY_FILES, Storage
 from app.storage.validators import ValidationError
 
-DATA_FILES = (
-    "questions.json",
-    "channels.json",
-    "schedules.json",
-    "publishing_history.json",
-    "settings.json",
-    "users.json",
-    "secrets.json",
-    "audit_log.json",
-    "poll_results.json",
-    "poll_answers.json",
-    "userbot_accounts.json",
-)
+DB_FILENAME = "tqm.db"
+# Kept so an archive from a pre-SQLite version can still be imported.
+LEGACY_DATA_FILES = tuple(LEGACY_FILES.values())
 
 
 class BackupService:
@@ -56,59 +56,50 @@ class BackupService:
         name = f"{stamp}-{label}" if label else stamp
         target = self._storage.backup_dir / name
         target.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for filename in DATA_FILES:
-            source = self._storage.data_dir / filename
-            if source.exists():
-                shutil.copy2(source, target / filename)
-                copied += 1
+        self._storage.db.snapshot(target / DB_FILENAME)
         self._audit.record(
-            "backup.created", actor=actor, message=f"إنشاء نسخة احتياطية {name} ({copied} ملف)"
+            "backup.created",
+            actor=actor,
+            message=f"إنشاء نسخة احتياطية {name}",
         )
         return name
 
     def export_archive(self) -> bytes:
-        """Return a zip archive of every data file, for download."""
-        import io
+        """Return a zip archive holding a consistent copy of the database.
 
+        A raw copy of the ``.db`` file would miss whatever still sits in the WAL
+        journal, so a snapshot is taken first and *that* consistent file is
+        archived.
+        """
         buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for filename in DATA_FILES:
-                path = self._storage.data_dir / filename
-                if path.exists():
-                    archive.write(path, arcname=filename)
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / DB_FILENAME
+            self._storage.db.snapshot(snapshot)
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(snapshot, arcname=DB_FILENAME)
         return buffer.getvalue()
 
     def restore_from_archive(
         self, payload: bytes, *, actor: str = "system"
     ) -> dict[str, Any]:
-        """Replace data files with the ones found in an uploaded archive.
+        """Restore from an uploaded archive.
 
+        Accepts either the current format (a ``tqm.db`` inside the zip) or a
+        legacy archive of ``*.json`` files, which are merged into the database.
         A snapshot is taken first so the previous state can always be recovered.
         """
-        import io
-
         self.create_snapshot(label="pre-restore", actor=actor)
-        restored: list[str] = []
+
         try:
             with zipfile.ZipFile(io.BytesIO(payload)) as archive:
                 names = set(archive.namelist())
-                for filename in DATA_FILES:
-                    if filename not in names:
-                        continue
-                    raw = archive.read(filename).decode("utf-8")
-                    parsed = json.loads(raw)
-                    if not isinstance(parsed, dict):
-                        raise ValidationError(f"{filename} يجب أن يحتوي على كائن JSON.")
-                    (self._storage.data_dir / filename).write_text(
-                        json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
-                        encoding="utf-8",
-                    )
-                    restored.append(filename)
+                if DB_FILENAME in names:
+                    self._storage.db.restore_from_bytes(archive.read(DB_FILENAME))
+                    restored = [DB_FILENAME]
+                else:
+                    restored = self._restore_legacy(archive, names)
         except zipfile.BadZipFile as exc:
             raise ValidationError("الملف المرفوع ليس أرشيف ZIP صالحاً.") from exc
-        except json.JSONDecodeError as exc:
-            raise ValidationError(f"أحد الملفات داخل الأرشيف ليس JSON صالحاً: {exc}") from exc
 
         if not restored:
             raise ValidationError("لم يُعثر على أي ملف بيانات معروف داخل الأرشيف.")
@@ -121,24 +112,43 @@ class BackupService:
         )
         return {"restored": restored}
 
+    def _restore_legacy(self, archive: zipfile.ZipFile, names: set[str]) -> list[str]:
+        """Merge a pre-SQLite archive of JSON files into the database."""
+        stores = self._storage.all_stores()
+        by_filename = {filename: name for name, filename in LEGACY_FILES.items()}
+        restored: list[str] = []
+        for filename in LEGACY_DATA_FILES:
+            if filename not in names:
+                continue
+            try:
+                parsed = json.loads(archive.read(filename).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValidationError(
+                    f"أحد الملفات داخل الأرشيف ليس JSON صالحاً: {exc}"
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise ValidationError(f"{filename} يجب أن يحتوي على كائن JSON.")
+            stores[by_filename[filename]].write(parsed)
+            restored.append(filename)
+        return restored
+
     def restore_snapshot(self, name: str, *, actor: str = "system") -> dict[str, Any]:
         source = self._storage.backup_dir / name
         if not source.is_dir():
             raise ValidationError("النسخة الاحتياطية المطلوبة غير موجودة.")
+        database = source / DB_FILENAME
+        if not database.exists():
+            raise ValidationError("النسخة الاحتياطية لا تحتوي على قاعدة بيانات صالحة.")
+
         self.create_snapshot(label="pre-restore", actor=actor)
-        restored: list[str] = []
-        for filename in DATA_FILES:
-            candidate = source / filename
-            if candidate.exists():
-                shutil.copy2(candidate, self._storage.data_dir / filename)
-                restored.append(filename)
+        self._storage.db.restore_from_path(database)
         self._audit.record(
             "backup.restored",
             actor=actor,
             level="warning",
-            message=f"استعادة النسخة {name} ({len(restored)} ملف)",
+            message=f"استعادة النسخة {name}",
         )
-        return {"restored": restored, "source": name}
+        return {"restored": [DB_FILENAME], "source": name}
 
     def prune(self, keep: int = 30) -> int:
         root = self._storage.backup_dir

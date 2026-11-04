@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -38,9 +37,11 @@ def test_set_bot_token_encrypts_at_rest(services) -> None:
     store: SecretStore = services.secrets
     store.set_bot_token(FAKE_TOKEN)
 
-    raw = (services.storage.data_dir / "secrets.json").read_text(encoding="utf-8")
-    assert FAKE_TOKEN not in raw, "the token must never be stored in clear"
-    document = json.loads(raw)
+    # The token must never be stored in clear anywhere in the database file.
+    raw = services.storage.db.path.read_bytes()
+    assert FAKE_TOKEN.encode("utf-8") not in raw, "the token must never be stored in clear"
+
+    document = services.storage.secrets.read()
     assert document["telegram_bot_token"], "an encrypted value should be present"
 
     assert store.bot_token() == FAKE_TOKEN

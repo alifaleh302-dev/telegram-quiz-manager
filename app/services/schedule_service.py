@@ -6,7 +6,7 @@ from typing import Any
 
 from app.services.audit_service import AuditService
 from app.services.channel_service import ChannelService
-from app.storage.json_manager import Storage, utc_now_iso
+from app.storage.sqlite_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError, validate_schedule_payload
 
 

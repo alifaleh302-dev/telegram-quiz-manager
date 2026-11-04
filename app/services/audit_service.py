@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.storage.json_manager import Storage, utc_now_iso
+from app.storage.sqlite_manager import Storage, utc_now_iso
 
 MAX_ENTRIES = 500
 

@@ -1,6 +1,6 @@
 """User accounts: authentication, profiles and admin-managed access.
 
-Accounts live in ``users.json``. Login history lives in ``settings.json``
+Accounts live in the database. Login history lives in the ``settings`` document
 (``login_history``) because it is display-only state, not an account attribute.
 """
 
@@ -20,7 +20,7 @@ from app.core.permissions import (
 )
 from app.core.security import hash_password, verify_password
 from app.services.audit_service import AuditService
-from app.storage.json_manager import Storage, utc_now_iso
+from app.storage.sqlite_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

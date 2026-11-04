@@ -22,7 +22,7 @@ ANALYTICS_JOB_ID = "analytics:auto-collect"
 
 
 class SchedulerEngine:
-    """Keeps the APScheduler job store in sync with ``schedules.json``."""
+    """Keeps the APScheduler job store in sync with the stored schedules."""
 
     def __init__(
         self,

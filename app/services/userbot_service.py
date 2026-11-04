@@ -5,8 +5,8 @@ session) instead of a Bot API token, which is useful when the target channel
 does not allow bots to post polls. Several accounts can be registered; a
 channel is then pinned to one account, or to a rotation pool.
 
-Only non-secret metadata lives in ``userbot_accounts.json``. The api_id,
-api_hash and session string are encrypted in ``secrets.json`` through
+Only non-secret metadata lives in the ``userbot_accounts`` collection. The api_id,
+api_hash and session string are encrypted in the ``secrets`` collection through
 :class:`~app.services.secret_store.SecretStore`, so the account list can be
 backed up or exported without leaking credentials.
 """
@@ -17,7 +17,7 @@ from typing import Any
 
 from app.services.audit_service import AuditService
 from app.services.secret_store import SecretStore, validate_api_id, validate_api_hash
-from app.storage.json_manager import Storage, utc_now_iso
+from app.storage.sqlite_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
 # Account lifecycle: a freshly created account has no session yet; ``active``

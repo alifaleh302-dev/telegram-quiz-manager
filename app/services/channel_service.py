@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.audit_service import AuditService
-from app.storage.json_manager import Storage, utc_now_iso
+from app.storage.sqlite_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError, validate_channel_payload
 
 

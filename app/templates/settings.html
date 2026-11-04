@@ -54,7 +54,7 @@
           </button>
         </div>
         <p class="hint mt-1">
-          يُخزَّن التوكن مشفَّراً في <code>data/secrets.json</code> بمفتاح مشتق من
+          يُخزَّن التوكن مشفَّراً في قاعدة البيانات <code>data/tqm.db</code> بمفتاح مشتق من
           <code>SECRET_KEY</code>، ولا يُعاد عرضه أبداً بعد الحفظ.
         </p>
         <div class="d-flex gap-2 flex-wrap">
@@ -75,7 +75,7 @@
 
       <p class="hint mt-3">
         <i class="bi bi-shield-lock"></i>
-        تُخزَّن كلمات المرور مُجزَّأة (Argon2id) في <code>data/users.json</code> ولا تُعرض أبداً.
+        تُخزَّن كلمات المرور مُجزَّأة (Argon2id) في قاعدة البيانات <code>data/tqm.db</code> ولا تُعرض أبداً.
         تُضبط كلمة مرور المدير الأولية عبر <code>ADMIN_PASSWORD</code> في <code>.env</code>،
         ويمكن تغييرها من قسم «الحساب وكلمة المرور» أو إعادة تعيينها من صفحة المستخدمين.
       </p>
@@ -214,7 +214,7 @@
       <i class="bi bi-info-circle"></i>
       يسمح userbot بالنشر كحساب مستخدم حقيقي (عبر <code>api_id</code> و
       <code>api_hash</code> و جلسة مسجَّلة) بدلاً من بوت. تُخزَّن المفاتيح
-      والجلسة مشفَّرة في <code>data/secrets.json</code> ولا تُعرض أبداً بعد الحفظ.
+      والجلسة مشفَّرة في قاعدة البيانات <code>data/tqm.db</code> ولا تُعرض أبداً بعد الحفظ.
       احصل على المفاتيح من <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>.
     </p>
 

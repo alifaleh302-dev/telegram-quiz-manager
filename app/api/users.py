@@ -1,6 +1,6 @@
 """User management (admin only): list, create, update grants, delete.
 
-Accounts and their grants live in ``users.json``. Only an admin may reach these
+Accounts and their grants live in the database. Only an admin may reach these
 endpoints; every mutation is CSRF-checked via ``require_admin``.
 """
 

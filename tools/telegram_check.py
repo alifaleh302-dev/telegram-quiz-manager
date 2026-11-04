@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.config import get_settings  # noqa: E402
 from app.services.audit_service import AuditService  # noqa: E402
 from app.services.secret_store import SecretStore  # noqa: E402
-from app.storage.json_manager import Storage  # noqa: E402
+from app.storage.sqlite_manager import Storage  # noqa: E402
 from app.telegram.telegram_client import TelegramClient  # noqa: E402
 
 

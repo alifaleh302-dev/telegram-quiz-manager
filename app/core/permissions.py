@@ -5,7 +5,7 @@ Two roles exist:
 * ``admin`` — full control, including system settings and managing users.
 * ``user`` — only the areas an admin explicitly grants.
 
-Grants are stored per user in ``users.json``. The admin role implicitly holds
+Grants are stored per user in the database. The admin role implicitly holds
 every grant, so a new grant added to :data:`GRANTS` is available to admins
 without touching any user record.
 """

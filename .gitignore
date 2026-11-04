@@ -4,6 +4,9 @@
 !.env.example
 
 # === Runtime data (contains questions, channels, logs) ===
+/data/*.db
+/data/*.db-wal
+/data/*.db-shm
 /data/*.json
 /data/backups/
 /logs/

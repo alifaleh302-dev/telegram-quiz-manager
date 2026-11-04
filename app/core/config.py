@@ -75,6 +75,11 @@ class Settings(BaseSettings):
         return self.base_dir / "data"
 
     @property
+    def db_path(self) -> Path:
+        """The single SQLite database file holding every collection."""
+        return self.data_dir / "tqm.db"
+
+    @property
     def backup_dir(self) -> Path:
         return self.data_dir / "backups"
 
