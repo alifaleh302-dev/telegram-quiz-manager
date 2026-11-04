@@ -37,16 +37,30 @@ async def test_publish_marks_question_published_only_after_success(
     assert services.questions.get(ready_question["id"])["status"] == "published"
 
 
-async def test_publish_failure_leaves_question_ready(
+async def test_publish_timeout_is_recorded_as_unknown(
     services, ready_question, channel, fake_telegram
 ) -> None:
     from telegram.error import TimedOut
 
     fake_telegram.fail_with = TimedOut()
     entry = await services.publishing.publish(ready_question["id"], channel["id"])
-    assert entry["status"] == STATUS_FAILED
+    # A timeout may happen after delivery, so the outcome is unresolved rather
+    # than a plain failure, and the question stays ready for a human decision.
+    assert entry["status"] == STATUS_UNKNOWN
     assert entry["retryable"] is True
+    assert "راجع القناة" in entry["error"]
     assert services.questions.get(ready_question["id"])["status"] == "ready"
+
+
+async def test_publish_network_error_is_recorded_as_unknown(
+    services, ready_question, channel, fake_telegram
+) -> None:
+    from telegram.error import NetworkError
+
+    fake_telegram.fail_with = NetworkError("connection reset")
+    entry = await services.publishing.publish(ready_question["id"], channel["id"])
+    assert entry["status"] == STATUS_UNKNOWN
+    assert entry["retryable"] is True
 
 
 async def test_publish_blocks_permanent_error_from_retry(
@@ -98,16 +112,31 @@ async def test_missing_question_or_channel_rejected(services, ready_question, ch
 async def test_retry_succeeds_after_transient_failure(
     services, ready_question, channel, fake_telegram
 ) -> None:
-    from telegram.error import NetworkError
+    from telegram.error import RetryAfter
 
-    fake_telegram.fail_with = NetworkError("boom")
+    # RetryAfter means Telegram rejected the call, so the post did not happen.
+    fake_telegram.fail_with = RetryAfter(5)
     entry = await services.publishing.publish(ready_question["id"], channel["id"])
     assert entry["status"] == STATUS_FAILED
+    assert entry["retryable"] is True
 
     fake_telegram.fail_with = None
     retried = await services.publishing.retry(entry["id"])
     assert retried["status"] == STATUS_SUCCESS
     assert retried["attempts"] == 2
+    assert services.questions.get(ready_question["id"])["status"] == "published"
+
+
+async def test_retry_recovers_an_unknown_entry(services, ready_question, channel, fake_telegram) -> None:
+    from telegram.error import TimedOut
+
+    fake_telegram.fail_with = TimedOut()
+    entry = await services.publishing.publish(ready_question["id"], channel["id"])
+    assert entry["status"] == STATUS_UNKNOWN
+
+    fake_telegram.fail_with = None
+    retried = await services.publishing.retry(entry["id"])
+    assert retried["status"] == STATUS_SUCCESS
     assert services.questions.get(ready_question["id"])["status"] == "published"
 
 

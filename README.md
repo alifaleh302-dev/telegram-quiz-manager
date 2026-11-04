@@ -75,7 +75,7 @@ app/
 
 data/      # questions / channels / schedules / publishing_history / settings / users / secrets / audit_log
 logs/      # app.log
-tests/     # 118 اختباراً
+tests/     # 120 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 ```
 
@@ -154,7 +154,7 @@ tools/     # smoke_test.sh · telegram_check.py
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 118 اختباراً
+python -m pytest              # 120 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```

@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = ""
+    # Per-request timeout for Bot API calls. The library default (5s) is too
+    # tight on slow links: a quiz can be delivered while we still time out
+    # reading the reply, which makes a successful publish look like a failure.
+    telegram_timeout: float = 30.0
 
     # --- Scheduling ---
     default_timezone: str = "Asia/Riyadh"

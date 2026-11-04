@@ -21,6 +21,9 @@ logger = get_logger(__name__)
 
 # Errors that are worth retrying: network hiccups and Telegram being busy.
 _RETRYABLE = {"TimedOut", "NetworkError", "RetryAfter", "FloodWait"}
+# A subset where the request may already have been applied on Telegram's side:
+# the outcome is unknown, so a blind retry risks a duplicate post.
+_AMBIGUOUS = {"TimedOut", "NetworkError"}
 # Errors that will never succeed on retry without operator action.
 _PERMANENT = {
     "Forbidden",
@@ -44,6 +47,16 @@ class PublishResult:
     @property
     def status(self) -> str:
         return "success" if self.ok else "failed"
+
+    @property
+    def ambiguous(self) -> bool:
+        """The request may have reached Telegram even though we saw an error.
+
+        A timeout or dropped connection can happen *after* the quiz was
+        delivered but before we read the reply, so the outcome is unknown:
+        retrying blindly could post the same question twice.
+        """
+        return self.error_code in _AMBIGUOUS
 
 
 class TelegramClient:
@@ -85,6 +98,7 @@ class TelegramClient:
 
     async def _get_bot(self) -> Any:
         from telegram import Bot
+        from telegram.request import HTTPXRequest
 
         token = self.token
         if self._bot is not None and self._bot_token == token:
@@ -96,7 +110,9 @@ class TelegramClient:
                         await self._bot.shutdown()
                     except Exception as exc:  # pragma: no cover - best effort
                         logger.debug("bot shutdown failed: %s", exc)
-                self._bot = Bot(token=token)
+                timeout = get_settings().telegram_timeout
+                request = HTTPXRequest(connect_timeout=timeout, read_timeout=timeout)
+                self._bot = Bot(token=token, request=request)
                 self._bot_token = token
         return self._bot
 

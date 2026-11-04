@@ -202,19 +202,31 @@ class PublishingService:
                     channel_id=channel_id,
                 )
             else:
+                # A timeout or dropped connection may have happened after the
+                # quiz was delivered, so record it as unresolved instead of a
+                # plain failure: a human decides whether to retry.
+                ambiguous = result.ambiguous
                 final = self._finish(
                     entry["id"],
-                    status=STATUS_FAILED,
-                    error=result.error,
+                    status=STATUS_UNKNOWN if ambiguous else STATUS_FAILED,
+                    error=(
+                        f"{result.error} — قد تكون الرسالة وصلت فعلاً؛ راجع القناة قبل الإعادة."
+                        if ambiguous
+                        else result.error
+                    ),
                     error_code=result.error_code,
                     retryable=result.retryable,
                 )
                 self._channels.record_publish(channel_id, STATUS_FAILED)
                 self._audit.record(
-                    "publishing.failed",
+                    "publishing.unresolved" if ambiguous else "publishing.failed",
                     actor=actor,
-                    level="error",
-                    message=f"فشل نشر السؤال {question_id}: {result.error_code}",
+                    level="warning" if ambiguous else "error",
+                    message=(
+                        f"نشر السؤال {question_id} غير محسوم ({result.error_code})؛ يلزم مراجعة يدوية."
+                        if ambiguous
+                        else f"فشل نشر السؤال {question_id}: {result.error_code}"
+                    ),
                     question_id=question_id,
                     channel_id=channel_id,
                 )
