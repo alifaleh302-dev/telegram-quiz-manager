@@ -16,6 +16,7 @@ from app.services.question_service import QuestionService
 from app.services.schedule_service import ScheduleService
 from app.services.secret_store import SecretStore
 from app.services.settings_service import SettingsService
+from app.services.user_service import UserService
 from app.services.userbot_service import UserbotAccountService
 from app.storage.json_manager import Storage
 from app.telegram.bot import BotManager
@@ -34,6 +35,7 @@ class Services:
     schedules: ScheduleService
     publishing: PublishingService
     app_settings: SettingsService
+    users: UserService
     analytics: AnalyticsService
     backups: BackupService
     runner: ScheduleRunner
@@ -70,6 +72,7 @@ def build_services(settings: Settings) -> Services:
     channels = ChannelService(storage, audit)
     schedules = ScheduleService(storage, audit, channels)
     app_settings = SettingsService(storage, audit)
+    users = UserService(storage, audit)
     secrets = SecretStore(storage, audit)
     userbot_accounts = UserbotAccountService(storage, audit, secrets)
     bot_client = TelegramClient(secret_store=secrets)
@@ -101,7 +104,7 @@ def build_services(settings: Settings) -> Services:
         secret_store=secrets,
     )
 
-    app_settings.ensure_admin()
+    users.ensure_admin()
 
     return Services(
         settings=settings,
@@ -112,6 +115,7 @@ def build_services(settings: Settings) -> Services:
         schedules=schedules,
         publishing=publishing,
         app_settings=app_settings,
+        users=users,
         analytics=analytics,
         backups=backups,
         runner=runner,

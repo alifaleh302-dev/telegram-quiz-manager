@@ -1,9 +1,20 @@
 {% extends "base.html" %}
 {% block title %}الإعدادات — {{ app_name }}{% endblock %}
 {% block page_title %}الإعدادات{% endblock %}
-{% block page_subtitle %}إعدادات البوت والنشر والنسخ الاحتياطي والحساب{% endblock %}
+{% block page_subtitle %}{{ 'إعدادات البوت والنشر والنسخ الاحتياطي والحساب' if is_admin else 'بيانات حسابك وكلمة المرور' }}{% endblock %}
+
+{% block topbar_actions %}
+{% if is_admin %}
+<div class="d-flex gap-2 flex-wrap">
+  <a class="btn btn-sm btn-outline-light" href="/users">
+    <i class="bi bi-people"></i> إدارة المستخدمين والصلاحيات
+  </a>
+</div>
+{% endif %}
+{% endblock %}
 
 {% block content %}
+{% if is_admin %}
 <div class="grid-two">
   <div class="panel">
     <div class="panel-header"><h2><i class="bi bi-robot"></i> حالة البوت والتوكن</h2></div>
@@ -64,8 +75,9 @@
 
       <p class="hint mt-3">
         <i class="bi bi-shield-lock"></i>
-        كلمة مرور المدير لا تُخزَّن في ملفات JSON؛ يتم ضبطها عبر متغيرات البيئة
-        في ملف <code>.env</code>.
+        تُخزَّن كلمات المرور مُجزَّأة (Argon2id) في <code>data/users.json</code> ولا تُعرض أبداً.
+        تُضبط كلمة مرور المدير الأولية عبر <code>ADMIN_PASSWORD</code> في <code>.env</code>،
+        ويمكن تغييرها من قسم «الحساب وكلمة المرور» أو إعادة تعيينها من صفحة المستخدمين.
       </p>
     </div>
   </div>
@@ -302,6 +314,7 @@
     </p>
   </div>
 </div>
+{% endif %}
 
 <div class="grid-two">
   <div class="panel">
@@ -333,6 +346,7 @@
     </div>
   </div>
 
+  {% if is_admin %}
   <div class="panel">
     <div class="panel-header"><h2><i class="bi bi-clock-history"></i> سجل تسجيل الدخول</h2></div>
     <div class="panel-body">
@@ -352,8 +366,10 @@
       {% endif %}
     </div>
   </div>
+  {% endif %}
 </div>
 
+{% if is_admin %}
 <div class="panel">
   <div class="panel-header"><h2><i class="bi bi-hdd-stack"></i> النسخ الاحتياطي والاستعادة</h2></div>
   <div class="panel-body">
@@ -399,6 +415,7 @@
     </p>
   </div>
 </div>
+{% endif %}
 
 <div class="modal fade" id="restoreModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">

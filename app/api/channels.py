@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from app.api.deps import api_guard, get_services, render, require_page_session
+from app.api.deps import (
+    get_services,
+    render,
+    require_page_permission,
+    require_permission,
+)
 
 router = APIRouter(tags=["channels"])
 
@@ -26,7 +31,9 @@ class ChannelIn(BaseModel):
 
 
 @router.get("/channels", response_class=HTMLResponse)
-async def channels_page(request: Request, session=Depends(require_page_session)) -> Response:
+async def channels_page(
+    request: Request, session=Depends(require_page_permission('channels'))
+) -> Response:
     if isinstance(session, RedirectResponse):
         return session
     services = get_services(request)
@@ -46,14 +53,14 @@ async def channels_page(request: Request, session=Depends(require_page_session))
 
 
 @router.get("/api/channels")
-async def list_channels(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+async def list_channels(request: Request, _: Any = Depends(require_permission('channels'))) -> dict[str, Any]:
     services = get_services(request)
     return {"channels": services.channels.list_channels()}
 
 
 @router.post("/api/channels", status_code=201)
 async def create_channel(
-    request: Request, payload: ChannelIn, session: Any = Depends(api_guard)
+    request: Request, payload: ChannelIn, session: Any = Depends(require_permission('channels'))
 ) -> dict[str, Any]:
     services = get_services(request)
     return services.channels.create(payload.model_dump(), actor=session.username)
@@ -64,7 +71,7 @@ async def update_channel(
     request: Request,
     channel_id: str,
     payload: ChannelIn,
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_permission('channels')),
 ) -> dict[str, Any]:
     services = get_services(request)
     return services.channels.update(
@@ -74,7 +81,7 @@ async def update_channel(
 
 @router.post("/api/channels/{channel_id}/toggle")
 async def toggle_channel(
-    request: Request, channel_id: str, session: Any = Depends(api_guard)
+    request: Request, channel_id: str, session: Any = Depends(require_permission('channels'))
 ) -> dict[str, Any]:
     services = get_services(request)
     channel = services.channels.get(channel_id)
@@ -88,7 +95,7 @@ async def toggle_channel(
 
 @router.post("/api/channels/{channel_id}/default")
 async def set_default_channel(
-    request: Request, channel_id: str, session: Any = Depends(api_guard)
+    request: Request, channel_id: str, session: Any = Depends(require_permission('channels'))
 ) -> dict[str, Any]:
     services = get_services(request)
     services.channels.set_default(channel_id, actor=session.username)
@@ -97,7 +104,7 @@ async def set_default_channel(
 
 @router.delete("/api/channels/{channel_id}")
 async def delete_channel(
-    request: Request, channel_id: str, session: Any = Depends(api_guard)
+    request: Request, channel_id: str, session: Any = Depends(require_permission('channels'))
 ) -> dict[str, Any]:
     services = get_services(request)
     services.channels.delete(channel_id, actor=session.username)
@@ -106,7 +113,7 @@ async def delete_channel(
 
 @router.post("/api/channels/{channel_id}/test")
 async def test_channel(
-    request: Request, channel_id: str, session: Any = Depends(api_guard)
+    request: Request, channel_id: str, session: Any = Depends(require_permission('channels'))
 ) -> dict[str, Any]:
     services = get_services(request)
     channel = services.channels.get(channel_id)

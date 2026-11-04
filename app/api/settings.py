@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from app.api.deps import api_guard, get_services, render, require_page_session
+from app.api.deps import (
+    get_services,
+    render,
+    require_page_session,
+    api_guard,
+    require_admin,
+)
 from app.core.logging import get_logger
 from app.storage.validators import ValidationError
 
@@ -53,7 +59,7 @@ async def settings_page(request: Request, session=Depends(require_page_session))
             "bot": await services.telegram.get_me(),
             "token": services.secrets.status(),
             "backups": services.backups.list_backups()[:15],
-            "logins": services.app_settings.login_history(limit=15),
+            "logins": services.users.login_history(limit=15),
             "userbots": services.userbot_accounts.views(),
             "userbots_available": services.userbots.available(),
             "userbot_pending": services.userbots.pending_accounts(),
@@ -64,20 +70,20 @@ async def settings_page(request: Request, session=Depends(require_page_session))
                 "data_dir": str(services.settings.data_dir),
                 "secret_key_set": bool(services.settings.secret_key),
             },
-            "user": services.app_settings.get_user(session.username),
+            "user": services.users.get_user(session.username),
         },
         session=session,
     )
 
 
 @router.get("/api/settings/telegram-token")
-async def get_telegram_token(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+async def get_telegram_token(request: Request, _: Any = Depends(require_admin)) -> dict[str, Any]:
     return get_services(request).secrets.status()
 
 
 @router.post("/api/settings/telegram-token")
 async def set_telegram_token(
-    request: Request, payload: TelegramTokenIn, session: Any = Depends(api_guard)
+    request: Request, payload: TelegramTokenIn, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     status = services.secrets.set_bot_token(payload.token, actor=session.username)
@@ -87,7 +93,7 @@ async def set_telegram_token(
 
 @router.delete("/api/settings/telegram-token")
 async def clear_telegram_token(
-    request: Request, session: Any = Depends(api_guard)
+    request: Request, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     status = services.secrets.clear_bot_token(actor=session.username)
@@ -97,7 +103,7 @@ async def clear_telegram_token(
 
 @router.post("/api/settings/telegram-token/test")
 async def test_telegram_token(
-    request: Request, payload: TelegramTokenIn, session: Any = Depends(api_guard)
+    request: Request, payload: TelegramTokenIn, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     """Verify a token (the submitted one, or the stored one) against Telegram."""
     services = get_services(request)
@@ -125,13 +131,13 @@ async def test_telegram_token(
 
 
 @router.get("/api/settings")
-async def get_settings_api(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+async def get_settings_api(request: Request, _: Any = Depends(require_admin)) -> dict[str, Any]:
     return get_services(request).app_settings.get()
 
 
 @router.put("/api/settings")
 async def update_settings(
-    request: Request, payload: dict[str, Any], session: Any = Depends(api_guard)
+    request: Request, payload: dict[str, Any], session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     document = services.app_settings.update(payload, actor=session.username)
@@ -144,7 +150,7 @@ async def change_password(
     request: Request, payload: PasswordIn, session: Any = Depends(api_guard)
 ) -> dict[str, Any]:
     services = get_services(request)
-    services.app_settings.change_password(
+    services.users.change_password(
         session.username,
         payload.current_password,
         payload.new_password,
@@ -158,19 +164,19 @@ async def update_profile(
     request: Request, payload: ProfileIn, session: Any = Depends(api_guard)
 ) -> dict[str, Any]:
     services = get_services(request)
-    services.app_settings.update_profile(
+    services.users.update_profile(
         session.username, payload.model_dump(), actor=session.username
     )
     return {"ok": True}
 
 
 @router.get("/api/backups")
-async def list_backups(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+async def list_backups(request: Request, _: Any = Depends(require_admin)) -> dict[str, Any]:
     return {"backups": get_services(request).backups.list_backups()}
 
 
 @router.post("/api/backups/create")
-async def create_backup(request: Request, session: Any = Depends(api_guard)) -> dict[str, Any]:
+async def create_backup(request: Request, session: Any = Depends(require_admin)) -> dict[str, Any]:
     services = get_services(request)
     name = services.backups.create_snapshot(label="manual", actor=session.username)
     return {"ok": True, "name": name}
@@ -178,7 +184,7 @@ async def create_backup(request: Request, session: Any = Depends(api_guard)) -> 
 
 @router.post("/api/backups/restore/{name}")
 async def restore_backup(
-    request: Request, name: str, session: Any = Depends(api_guard)
+    request: Request, name: str, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     result = services.backups.restore_snapshot(name, actor=session.username)
@@ -187,7 +193,7 @@ async def restore_backup(
 
 
 @router.get("/api/export")
-async def export_all(request: Request, _: Any = Depends(api_guard)) -> Response:
+async def export_all(request: Request, _: Any = Depends(require_admin)) -> Response:
     services = get_services(request)
     payload = services.backups.export_archive()
     return Response(
@@ -201,7 +207,7 @@ async def export_all(request: Request, _: Any = Depends(api_guard)) -> Response:
 async def restore_from_upload(
     request: Request,
     file: UploadFile = File(...),
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     services = get_services(request)
     payload = await file.read()

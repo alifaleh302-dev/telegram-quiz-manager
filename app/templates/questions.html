@@ -5,6 +5,7 @@
 
 {% block topbar_actions %}
 <div class="d-flex gap-2 flex-wrap">
+  {% if 'questions' in permissions %}
   <a class="btn btn-sm btn-primary" href="/questions/new">
     <i class="bi bi-plus-lg"></i> سؤال جديد
   </a>
@@ -14,6 +15,7 @@
   <a class="btn btn-sm btn-outline-light" href="/api/questions/export">
     <i class="bi bi-download"></i> تصدير JSON
   </a>
+  {% endif %}
 </div>
 {% endblock %}
 
@@ -55,19 +57,28 @@
       <a class="btn btn-outline-secondary" href="/questions">إعادة تعيين</a>
     </form>
 
+    {% if 'questions' in permissions %}
     <div class="bulk-bar" id="bulkBar" hidden>
       <span><strong id="bulkCount">0</strong> محدد</span>
+      {% if 'publish' in permissions %}
+      <button class="btn btn-sm btn-success" onclick="TQM.bulkPublish()">
+        <i class="bi bi-send-fill"></i> نشر المحدد
+      </button>
+      {% endif %}
       <button class="btn btn-sm btn-info" onclick="TQM.bulk('set_status','ready')">تعيين كجاهز</button>
       <button class="btn btn-sm btn-secondary" onclick="TQM.bulk('set_status','draft')">تعيين كمسودة</button>
       <button class="btn btn-sm btn-danger" onclick="TQM.bulk('delete')">حذف المحدد</button>
     </div>
+    {% endif %}
 
     {% if questions %}
     <div class="table-responsive">
       <table class="table table-hover align-middle">
         <thead>
           <tr>
+            {% if 'questions' in permissions %}
             <th style="width:36px"><input type="checkbox" class="form-check-input" id="checkAll"></th>
+            {% endif %}
             <th>المعرف</th>
             <th>السؤال</th>
             <th>التصنيف</th>
@@ -80,7 +91,9 @@
           {% for question in questions %}
           <tr data-id="{{ question.id }}" data-question-id="{{ question.id }}"
               data-question-text="{{ question.question }}">
+            {% if 'questions' in permissions %}
             <td><input type="checkbox" class="form-check-input row-check" value="{{ question.id }}"></td>
+            {% endif %}
             <td><code>{{ question.id }}</code></td>
             <td class="question-cell">
               <span class="q-text">{{ question.question }}</span>
@@ -104,6 +117,7 @@
                         onclick='TQM.previewQuestion({{ question | tojson }})'>
                   <i class="bi bi-eye"></i>
                 </button>
+                {% if 'questions' in permissions %}
                 <a class="btn btn-outline-light" title="تعديل" href="/questions/{{ question.id }}/edit">
                   <i class="bi bi-pencil"></i>
                 </a>
@@ -115,6 +129,7 @@
                         onclick="TQM.deleteQuestion('{{ question.id }}')">
                   <i class="bi bi-trash"></i>
                 </button>
+                {% endif %}
               </div>
             </td>
           </tr>
@@ -131,7 +146,51 @@
   </div>
 </div>
 
-{% include "partials/publish_menu.html" %}
+  {% include "partials/publish_menu.html" %}
+
+  {% if 'questions' in permissions and 'publish' in permissions %}
+  <!-- Bulk publish: send every selected question to one channel -->
+  <div class="modal fade" id="bulkPublishModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-send-fill"></i> نشر الأسئلة المحددة</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <span class="mini-label">الأسئلة المحددة</span>
+            <p class="mb-1"><strong id="bpCount">0</strong> سؤالاً</p>
+            <ul class="bp-list" id="bpList"></ul>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="bpChannel">القناة المستهدفة</label>
+            <select class="form-select" id="bpChannel">
+              {% for channel in channels %}
+              <option value="{{ channel.id }}" {{ 'disabled' if not channel.enabled }}>
+                {{ channel.name }} ({{ channel.chat_id }}){{ ' — معطّلة' if not channel.enabled }}
+              </option>
+              {% endfor %}
+            </select>
+            {% if not channels %}
+            <div class="form-text text-warning">لا توجد قنوات بعد. أضف قناة من صفحة القنوات أولاً.</div>
+            {% endif %}
+          </div>
+          <div class="alert alert-warning small py-2 mb-0">
+            <i class="bi bi-exclamation-triangle"></i>
+            تُرسل الأسئلة المحددة بالتتابع إلى القناة المختارة. النشر اليدوي يتجاوز منع التكرار.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-success" type="button" id="bpConfirm" {{ 'disabled' if not channels }}>
+            <i class="bi bi-send-fill"></i> نشر الآن
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
 <!-- Preview modal -->
 <div class="modal fade" id="previewModal" tabindex="-1">
@@ -154,6 +213,7 @@
 </div>
 
 <!-- Import modal -->
+{% if 'questions' in permissions %}
 <div class="modal fade" id="importModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -187,6 +247,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -195,6 +256,7 @@
     TQM.initQuestionTable();
     TQM.initImportForm();
     TQM.initManualPublish();
+    TQM.initBulkPublish();
   });
 </script>
 {% endblock %}

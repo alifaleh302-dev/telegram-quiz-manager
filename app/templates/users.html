@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}المستخدمون — {{ app_name }}{% endblock %}
+{% block page_title %}المستخدمون والصلاحيات{% endblock %}
+{% block page_subtitle %}إنشاء الحسابات ومنح الصلاحيات: الأتمتة، النشر، بنك الأسئلة وغيرها{% endblock %}
+
+{% block topbar_actions %}
+<div class="d-flex gap-2 flex-wrap">
+  <button class="btn btn-sm btn-primary" onclick="TQM.showUserForm()">
+    <i class="bi bi-person-plus"></i> مستخدم جديد
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="panel">
+  <div class="panel-body">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>اسم المستخدم</th>
+            <th>الدور</th>
+            <th>الصلاحيات</th>
+            <th>البريد</th>
+            <th class="text-end">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+          <tr data-username="{{ user.username }}">
+            <td>
+              <code>{{ user.username }}</code>
+              {% if user.username == session.username %}
+              <span class="badge text-bg-secondary">أنت</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if user.role == 'admin' %}
+              <span class="badge text-bg-warning"><i class="bi bi-shield-fill-check"></i> مدير</span>
+              {% else %}
+              <span class="badge text-bg-dark">مستخدم</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if user.role == 'admin' %}
+              <span class="text-secondary small">كل الصلاحيات</span>
+              {% elif user.permissions %}
+              <div class="d-flex flex-wrap gap-1">
+                {% for key in user.permissions %}
+                <span class="badge text-bg-info">{{ grants.get(key, key) }}</span>
+                {% endfor %}
+              </div>
+              {% else %}
+              <span class="text-secondary small">لا صلاحيات</span>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ user.email or '—' }}</td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-light" title="تعديل الصلاحيات"
+                        onclick='TQM.editUser({{ user | tojson }})'>
+                  <i class="bi bi-sliders"></i>
+                </button>
+                <button class="btn btn-outline-light" title="إعادة تعيين كلمة المرور"
+                        onclick="TQM.resetUserPassword('{{ user.username }}')">
+                  <i class="bi bi-key"></i>
+                </button>
+                <button class="btn btn-outline-danger" title="حذف"
+                        onclick="TQM.deleteUser('{{ user.username }}')"
+                        {{ 'disabled' if user.username == session.username }}>
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="small text-secondary mb-0">
+      <i class="bi bi-info-circle"></i>
+      المدير يملك كل الصلاحيات دائماً. للمستخدم العادي تُمنح الصلاحيات بشكل منفصل،
+      ويمكن سحبها في أي وقت دون الحاجة إلى خروجه من النظام.
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <h6 class="panel-heading"><i class="bi bi-clock-history"></i> آخر عمليات تسجيل الدخول</h6>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr><th>الوقت</th><th>المستخدم</th><th>النتيجة</th><th>IP</th></tr>
+        </thead>
+        <tbody>
+          {% for item in logins %}
+          <tr>
+            <td class="small text-secondary">{{ item.timestamp }}</td>
+            <td>{{ item.username }}</td>
+            <td>
+              {% if item.success %}
+              <span class="badge text-bg-success">نجاح</span>
+              {% else %}
+              <span class="badge text-bg-danger">{{ item.detail or 'فشل' }}</span>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ item.ip or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="text-center text-secondary py-3">لا يوجد سجل بعد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Create / edit user modal -->
+<div class="modal fade" id="userModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="userModalTitle"><i class="bi bi-person-plus"></i> مستخدم جديد</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3" id="userUsernameWrap">
+          <label class="form-label" for="uUsername">اسم المستخدم</label>
+          <input class="form-control" id="uUsername" autocomplete="off">
+          <div class="form-text">3–32 حرفاً إنجليزياً: حروف، أرقام، و . _ -</div>
+        </div>
+        <div class="mb-3" id="userPasswordWrap">
+          <label class="form-label" for="uPassword">كلمة المرور</label>
+          <input class="form-control" id="uPassword" type="password" autocomplete="new-password">
+          <div class="form-text">8 أحرف على الأقل.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="uEmail">البريد الإلكتروني (اختياري)</label>
+          <input class="form-control" id="uEmail" type="email" autocomplete="off">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="uRole">الدور</label>
+          <select class="form-select" id="uRole">
+            <option value="user">مستخدم</option>
+            <option value="admin">مدير (كل الصلاحيات)</option>
+          </select>
+        </div>
+        <div class="mb-2" id="userPermsWrap">
+          <span class="mini-label">الصلاحيات</span>
+          <div class="perm-grid">
+            {% for key, label in grants.items() %}
+            <label class="form-check">
+              <input class="form-check-input perm-check" type="checkbox" value="{{ key }}">
+              <span class="form-check-label">{{ label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">إلغاء</button>
+        <button class="btn btn-primary" type="button" id="userSave">
+          <i class="bi bi-check-lg"></i> حفظ
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => TQM.initUsersPage());
+</script>
+{% endblock %}

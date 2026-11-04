@@ -5,12 +5,16 @@
 
 {% block topbar_actions %}
 <div class="d-flex gap-2">
+  {% if 'publish' in permissions %}
   <button class="btn btn-sm btn-primary" onclick="TQM.publishNow()">
     <i class="bi bi-send-fill"></i> نشر سؤال الآن
   </button>
+  {% endif %}
+  {% if 'automation' in permissions %}
   <button class="btn btn-sm btn-outline-warning" onclick="TQM.quickAction('/api/publishing/reconcile','مراجعة العمليات غير المحسومة')">
     <i class="bi bi-arrow-repeat"></i> مراجعة غير المحسوم
   </button>
+  {% endif %}
 </div>
 {% endblock %}
 

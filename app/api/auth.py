@@ -57,8 +57,8 @@ async def login_submit(
 ) -> Response:
     services = get_services(request)
     templates = get_templates(request)
-    ok = services.app_settings.authenticate(username, password)
-    services.app_settings.record_login(
+    ok = services.users.authenticate(username, password)
+    services.users.record_login(
         username, success=ok, ip=_client_ip(request),
         detail="" if ok else "بيانات دخول غير صحيحة",
     )

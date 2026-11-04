@@ -8,7 +8,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from app.api.deps import api_guard, get_services, render, require_page_session
+from app.api.deps import (
+    api_guard,
+    get_services,
+    render,
+    require_page_session,
+    require_permission,
+)
+from app.storage.validators import ValidationError
 
 router = APIRouter(tags=["publishing"])
 
@@ -21,6 +28,11 @@ class PublishNowIn(BaseModel):
 
 class ManualPublishIn(BaseModel):
     question_id: str
+    channel_id: str
+
+
+class BulkPublishIn(BaseModel):
+    question_ids: list[str]
     channel_id: str
 
 
@@ -67,7 +79,7 @@ async def list_history(
 
 @router.post("/api/publishing/publish-now")
 async def publish_now(
-    request: Request, payload: PublishNowIn, session: Any = Depends(api_guard)
+    request: Request, payload: PublishNowIn, session: Any = Depends(require_permission('publish'))
 ) -> dict[str, Any]:
     services = get_services(request)
     question_id = payload.question_id
@@ -97,7 +109,7 @@ async def publish_now(
 
 @router.post("/api/publishing/manual")
 async def manual_publish(
-    request: Request, payload: ManualPublishIn, session: Any = Depends(api_guard)
+    request: Request, payload: ManualPublishIn, session: Any = Depends(require_permission('publish'))
 ) -> dict[str, Any]:
     """Publish a chosen question to a chosen channel right now.
 
@@ -117,8 +129,66 @@ async def manual_publish(
     return {"ok": entry["status"] == "success", "entry": entry}
 
 
+@router.post("/api/publishing/bulk")
+async def bulk_publish(
+    request: Request, payload: BulkPublishIn, session: Any = Depends(require_permission("publish"))
+) -> dict[str, Any]:
+    """Publish several selected questions to one channel, in order.
+
+    Each question is published sequentially through the same path as the single
+    manual publish, so the pending-row claim and the audit trail behave the
+    same. One failure does not abort the rest; the caller gets a per-question
+    report.
+    """
+    services = get_services(request)
+
+    # Preserve the order the user selected, but never send the same question twice.
+    ids = list(dict.fromkeys(qid for qid in payload.question_ids if qid))
+    if not ids:
+        raise ValidationError("لم يتم تحديد أي سؤال.")
+    if not payload.channel_id:
+        raise ValidationError("يجب اختيار القناة المستهدفة.")
+
+    results: list[dict[str, Any]] = []
+    succeeded = 0
+    for question_id in ids:
+        try:
+            entry = await services.publishing.publish(
+                question_id,
+                payload.channel_id,
+                trigger="manual",
+                actor=session.username,
+                respect_pause=False,
+                allow_repeat=True,
+            )
+        except ValidationError as exc:
+            results.append(
+                {"question_id": question_id, "status": "failed", "error": str(exc)}
+            )
+            continue
+        ok = entry["status"] == "success"
+        succeeded += 1 if ok else 0
+        results.append(
+            {
+                "question_id": question_id,
+                "status": entry["status"],
+                "entry_id": entry["id"],
+                "error": entry.get("error") or "",
+            }
+        )
+
+    failed = len(results) - succeeded
+    return {
+        "ok": failed == 0,
+        "total": len(results),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
+
+
 @router.post("/api/publishing/pause")
-async def pause_publishing(request: Request, session: Any = Depends(api_guard)) -> dict[str, Any]:
+async def pause_publishing(request: Request, session: Any = Depends(require_permission('automation'))) -> dict[str, Any]:
     services = get_services(request)
     services.app_settings.set_publishing_enabled(False, actor=session.username)
     return {"ok": True, "publishing_enabled": False}
@@ -126,7 +196,7 @@ async def pause_publishing(request: Request, session: Any = Depends(api_guard)) 
 
 @router.post("/api/publishing/resume")
 async def resume_publishing(
-    request: Request, session: Any = Depends(api_guard)
+    request: Request, session: Any = Depends(require_permission('automation'))
 ) -> dict[str, Any]:
     services = get_services(request)
     services.app_settings.set_publishing_enabled(True, actor=session.username)
@@ -135,7 +205,7 @@ async def resume_publishing(
 
 @router.post("/api/publishing/retry/{entry_id}")
 async def retry_publish(
-    request: Request, entry_id: str, session: Any = Depends(api_guard)
+    request: Request, entry_id: str, session: Any = Depends(require_permission('automation'))
 ) -> dict[str, Any]:
     services = get_services(request)
     entry = await services.publishing.retry(entry_id, actor=session.username)
@@ -143,7 +213,7 @@ async def retry_publish(
 
 
 @router.post("/api/publishing/reconcile")
-async def reconcile(request: Request, session: Any = Depends(api_guard)) -> dict[str, Any]:
+async def reconcile(request: Request, session: Any = Depends(require_permission('automation'))) -> dict[str, Any]:
     services = get_services(request)
     count = services.publishing.reconcile_pending(actor=session.username)
     return {"ok": True, "reconciled": count}

@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from app.api.deps import api_guard, get_services, render, require_page_session
+from app.api.deps import (
+    get_services,
+    render,
+    require_page_permission,
+    require_permission,
+)
 
 router = APIRouter(tags=["analytics"])
 
@@ -29,7 +34,7 @@ def _analytics_payload(services: Any, channel_id: str = "") -> dict[str, Any]:
 @router.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(
     request: Request,
-    session=Depends(require_page_session),
+    session=Depends(require_page_permission('analytics')),
     channel: str = "",
 ) -> Response:
     if isinstance(session, RedirectResponse):
@@ -45,14 +50,14 @@ async def analytics_page(
 
 @router.get("/api/analytics")
 async def analytics_api(
-    request: Request, _: Any = Depends(api_guard), channel: str = ""
+    request: Request, _: Any = Depends(require_permission('analytics')), channel: str = ""
 ) -> dict[str, Any]:
     return _analytics_payload(get_services(request), channel)
 
 
 @router.get("/api/analytics/poll/{poll_id}")
 async def poll_detail(
-    request: Request, poll_id: str, _: Any = Depends(api_guard)
+    request: Request, poll_id: str, _: Any = Depends(require_permission('analytics'))
 ) -> dict[str, Any]:
     services = get_services(request)
     detail = services.analytics.poll_detail(poll_id)
@@ -68,7 +73,7 @@ class CollectIn(BaseModel):
 
 @router.post("/api/analytics/collect")
 async def collect(
-    request: Request, payload: CollectIn | None = None, session: Any = Depends(api_guard)
+    request: Request, payload: CollectIn | None = None, session: Any = Depends(require_permission('analytics'))
 ) -> dict[str, Any]:
     services = get_services(request)
     if services.dry_run:

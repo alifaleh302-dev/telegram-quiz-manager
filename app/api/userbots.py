@@ -1,6 +1,6 @@
 """Userbot accounts: CRUD plus the two-step MTProto login flow.
 
-All endpoints are behind ``api_guard`` (session + CSRF). Raw api_id, api_hash
+All endpoints are behind ``require_admin`` (admin role + CSRF). Raw api_id, api_hash
 and session strings are never returned — only masked status.
 """
 
@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from app.api.deps import api_guard, get_services
+from app.api.deps import get_services, require_admin
 
 router = APIRouter(tags=["userbots"])
 
@@ -35,7 +35,7 @@ class LoginCompleteIn(BaseModel):
 
 
 @router.get("/api/userbots")
-async def list_userbots(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+async def list_userbots(request: Request, _: Any = Depends(require_admin)) -> dict[str, Any]:
     services = get_services(request)
     return {
         "accounts": services.userbot_accounts.views(),
@@ -47,7 +47,7 @@ async def list_userbots(request: Request, _: Any = Depends(api_guard)) -> dict[s
 
 @router.post("/api/userbots", status_code=201)
 async def create_userbot(
-    request: Request, payload: UserbotIn, session: Any = Depends(api_guard)
+    request: Request, payload: UserbotIn, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     return services.userbot_accounts.create(payload.model_dump(), actor=session.username)
@@ -58,7 +58,7 @@ async def update_userbot(
     request: Request,
     account_id: str,
     payload: UserbotIn,
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     services = get_services(request)
     account = services.userbot_accounts.update(
@@ -70,7 +70,7 @@ async def update_userbot(
 
 @router.post("/api/userbots/{account_id}/toggle")
 async def toggle_userbot(
-    request: Request, account_id: str, session: Any = Depends(api_guard)
+    request: Request, account_id: str, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     account = services.userbot_accounts.get(account_id)
@@ -84,7 +84,7 @@ async def toggle_userbot(
 
 @router.post("/api/userbots/{account_id}/default")
 async def set_default_userbot(
-    request: Request, account_id: str, session: Any = Depends(api_guard)
+    request: Request, account_id: str, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     services.userbot_accounts.set_default(account_id, actor=session.username)
@@ -93,7 +93,7 @@ async def set_default_userbot(
 
 @router.delete("/api/userbots/{account_id}")
 async def delete_userbot(
-    request: Request, account_id: str, session: Any = Depends(api_guard)
+    request: Request, account_id: str, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     services.userbot_accounts.delete(account_id, actor=session.username)
@@ -106,7 +106,7 @@ async def start_login(
     request: Request,
     account_id: str,
     payload: LoginStartIn,
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     services = get_services(request)
     result = await services.userbots.start_login(account_id, payload.phone)
@@ -118,7 +118,7 @@ async def complete_login(
     request: Request,
     account_id: str,
     payload: LoginCompleteIn,
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_admin),
 ) -> dict[str, Any]:
     services = get_services(request)
     result = await services.userbots.complete_login(
@@ -132,7 +132,7 @@ async def complete_login(
 
 @router.post("/api/userbots/{account_id}/login/cancel")
 async def cancel_login(
-    request: Request, account_id: str, session: Any = Depends(api_guard)
+    request: Request, account_id: str, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     services = get_services(request)
     await services.userbots.cancel_login(account_id)
@@ -141,7 +141,7 @@ async def cancel_login(
 
 @router.post("/api/userbots/{account_id}/test")
 async def test_userbot(
-    request: Request, account_id: str, session: Any = Depends(api_guard)
+    request: Request, account_id: str, session: Any = Depends(require_admin)
 ) -> dict[str, Any]:
     """Verify the stored session still logs in, and report the account identity."""
     services = get_services(request)

@@ -9,7 +9,12 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from app.api.deps import api_guard, get_services, render, require_page_session
+from app.api.deps import (
+    get_services,
+    render,
+    require_page_permission,
+    require_permission,
+)
 from app.storage.validators import ValidationError
 
 router = APIRouter(tags=["questions"])
@@ -44,7 +49,7 @@ class ImportPayload(BaseModel):
 @router.get("/questions", response_class=HTMLResponse)
 async def questions_page(
     request: Request,
-    session=Depends(require_page_session),
+    session=Depends(require_page_permission('questions')),
     search: str = "",
     category: str = "",
     status: str = "",
@@ -76,7 +81,9 @@ async def questions_page(
 
 
 @router.get("/questions/new", response_class=HTMLResponse)
-async def question_new_page(request: Request, session=Depends(require_page_session)) -> Response:
+async def question_new_page(
+    request: Request, session=Depends(require_page_permission('questions'))
+) -> Response:
     if isinstance(session, RedirectResponse):
         return session
     services = get_services(request)
@@ -94,7 +101,7 @@ async def question_new_page(request: Request, session=Depends(require_page_sessi
 
 @router.get("/questions/{question_id}/edit", response_class=HTMLResponse)
 async def question_edit_page(
-    request: Request, question_id: str, session=Depends(require_page_session)
+    request: Request, question_id: str, session=Depends(require_page_permission('questions'))
 ) -> Response:
     if isinstance(session, RedirectResponse):
         return session
@@ -119,7 +126,7 @@ async def question_edit_page(
 @router.get("/api/questions")
 async def list_questions(
     request: Request,
-    _: Any = Depends(api_guard),
+    _: Any = Depends(require_permission('questions')),
     search: str = "",
     category: str = "",
     status: str = "",
@@ -136,7 +143,7 @@ async def list_questions(
 
 @router.post("/api/questions", status_code=201)
 async def create_question(
-    request: Request, payload: QuestionIn, session: Any = Depends(api_guard)
+    request: Request, payload: QuestionIn, session: Any = Depends(require_permission('questions'))
 ) -> dict[str, Any]:
     services = get_services(request)
     question = services.questions.create(payload.model_dump(), actor=session.username)
@@ -149,7 +156,7 @@ async def update_question(
     request: Request,
     question_id: str,
     payload: QuestionIn,
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_permission('questions')),
 ) -> dict[str, Any]:
     services = get_services(request)
     return services.questions.update(
@@ -159,7 +166,7 @@ async def update_question(
 
 @router.delete("/api/questions/{question_id}")
 async def delete_question(
-    request: Request, question_id: str, session: Any = Depends(api_guard)
+    request: Request, question_id: str, session: Any = Depends(require_permission('questions'))
 ) -> dict[str, Any]:
     services = get_services(request)
     services.questions.delete(question_id, actor=session.username)
@@ -168,7 +175,7 @@ async def delete_question(
 
 @router.post("/api/questions/{question_id}/duplicate", status_code=201)
 async def duplicate_question(
-    request: Request, question_id: str, session: Any = Depends(api_guard)
+    request: Request, question_id: str, session: Any = Depends(require_permission('questions'))
 ) -> dict[str, Any]:
     services = get_services(request)
     return services.questions.duplicate(question_id, actor=session.username)
@@ -176,7 +183,7 @@ async def duplicate_question(
 
 @router.post("/api/questions/bulk")
 async def bulk_questions(
-    request: Request, payload: BulkAction, session: Any = Depends(api_guard)
+    request: Request, payload: BulkAction, session: Any = Depends(require_permission('questions'))
 ) -> dict[str, Any]:
     services = get_services(request)
     if payload.action == "delete":
@@ -199,7 +206,7 @@ async def bulk_questions(
 
 @router.post("/api/questions/import")
 async def import_questions(
-    request: Request, payload: ImportPayload, session: Any = Depends(api_guard)
+    request: Request, payload: ImportPayload, session: Any = Depends(require_permission('questions'))
 ) -> dict[str, Any]:
     services = get_services(request)
     report = services.questions.import_questions(
@@ -216,7 +223,7 @@ async def import_questions_file(
     request: Request,
     file: UploadFile = File(...),
     duplicate_policy: str = Form("skip"),
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_permission('questions')),
 ) -> dict[str, Any]:
     services = get_services(request)
     raw = (await file.read()).decode("utf-8")
@@ -235,7 +242,7 @@ async def import_questions_file(
 
 
 @router.get("/api/questions/export")
-async def export_questions(request: Request, _: Any = Depends(api_guard)) -> JSONResponse:
+async def export_questions(request: Request, _: Any = Depends(require_permission('questions'))) -> JSONResponse:
     services = get_services(request)
     document = services.questions.export_document()
     headers = {"Content-Disposition": 'attachment; filename="questions.json"'}
@@ -246,7 +253,7 @@ async def export_questions(request: Request, _: Any = Depends(api_guard)) -> JSO
 # this catch-all parameter route.
 @router.get("/api/questions/{question_id}")
 async def get_question(
-    request: Request, question_id: str, _: Any = Depends(api_guard)
+    request: Request, question_id: str, _: Any = Depends(require_permission('questions'))
 ) -> dict[str, Any]:
     services = get_services(request)
     question = services.questions.get(question_id)

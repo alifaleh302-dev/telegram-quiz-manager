@@ -602,6 +602,166 @@ const TQM = (() => {
     });
   }
 
+  // ---------- Bulk publish (selected questions -> one channel) ----------
+  function initBulkPublish() {
+    const modalEl = document.getElementById('bulkPublishModal');
+    if (!modalEl) return;
+    const confirmBtn = document.getElementById('bpConfirm');
+    const channelSelect = document.getElementById('bpChannel');
+    let pending = [];
+
+    confirmBtn?.addEventListener('click', async () => {
+      if (!pending.length) return;
+      const channelId = channelSelect?.value;
+      if (!channelId) { toast('اختر قناة أولاً.', 'warning'); return; }
+
+      confirmBtn.disabled = true;
+      confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ النشر...';
+      const result = await api('/api/publishing/bulk', {
+        method: 'POST',
+        body: { question_ids: pending, channel_id: channelId },
+      });
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = '<i class="bi bi-send-fill"></i> نشر الآن';
+
+      if (result.ok && result.data) {
+        const { succeeded, failed, total } = result.data;
+        if (failed) {
+          toast(`تم نشر ${succeeded} من ${total} — فشل ${failed}`, 'warning');
+        } else {
+          toast(`تم نشر ${succeeded} سؤالاً بنجاح`);
+        }
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        setTimeout(() => window.location.reload(), 1200);
+      } else {
+        toast(result.data?.error || result.error || 'فشل النشر', 'error');
+      }
+    });
+
+    // Exposed so the bulk bar can open the modal with the current selection.
+    initBulkPublish.open = () => {
+      pending = selectedIds();
+      if (!pending.length) { toast('لم يتم تحديد أي سؤال.', 'warning'); return; }
+      const list = document.getElementById('bpList');
+      const count = document.getElementById('bpCount');
+      if (count) count.textContent = pending.length;
+      if (list) {
+        list.innerHTML = pending
+          .map((id) => {
+            const row = document.querySelector(`tr[data-question-id="${id}"] .q-text`);
+            const text = row ? row.textContent.trim().slice(0, 70) : '';
+            return `<li><code>${id}</code> ${text}</li>`;
+          })
+          .join('');
+      }
+      new bootstrap.Modal(modalEl).show();
+    };
+  }
+
+  function bulkPublish() {
+    if (initBulkPublish.open) initBulkPublish.open();
+  }
+
+  // ---------- Users admin page ----------
+  function initUsersPage() {
+    const modalEl = document.getElementById('userModal');
+    if (!modalEl) return;
+    const titleEl = document.getElementById('userModalTitle');
+    const usernameWrap = document.getElementById('userUsernameWrap');
+    const passwordWrap = document.getElementById('userPasswordWrap');
+    const usernameInput = document.getElementById('uUsername');
+    const passwordInput = document.getElementById('uPassword');
+    const emailInput = document.getElementById('uEmail');
+    const roleSelect = document.getElementById('uRole');
+    const permsWrap = document.getElementById('userPermsWrap');
+    const saveBtn = document.getElementById('userSave');
+    let editing = ''; // '' => create, otherwise the username being edited
+
+    const permChecks = () => Array.from(document.querySelectorAll('.perm-check'));
+    const chosenPerms = () => permChecks().filter((c) => c.checked).map((c) => c.value);
+
+    function syncRole() {
+      // Admins implicitly hold every grant, so the checkboxes are moot for them.
+      const isAdminRole = roleSelect.value === 'admin';
+      permsWrap.style.opacity = isAdminRole ? '0.45' : '1';
+      permChecks().forEach((c) => { c.disabled = isAdminRole; });
+    }
+    roleSelect?.addEventListener('change', syncRole);
+
+    function openForm(user) {
+      editing = user ? user.username : '';
+      titleEl.innerHTML = user
+        ? '<i class="bi bi-sliders"></i> تعديل الصلاحيات'
+        : '<i class="bi bi-person-plus"></i> مستخدم جديد';
+      usernameWrap.hidden = Boolean(user);
+      passwordWrap.hidden = Boolean(user);
+      usernameInput.value = user ? user.username : '';
+      passwordInput.value = '';
+      emailInput.value = user ? (user.email || '') : '';
+      roleSelect.value = user ? user.role : 'user';
+      const perms = user ? (user.permissions || []) : [];
+      permChecks().forEach((c) => { c.checked = perms.includes(c.value); });
+      syncRole();
+      new bootstrap.Modal(modalEl).show();
+    }
+
+    initUsersPage.openCreate = () => openForm(null);
+
+    saveBtn?.addEventListener('click', async () => {
+      const payload = {
+        email: emailInput.value.trim(),
+        role: roleSelect.value,
+        permissions: chosenPerms(),
+      };
+      let result;
+      if (editing) {
+        result = await api(`/api/users/${encodeURIComponent(editing)}`, {
+          method: 'PUT',
+          body: payload,
+        });
+      } else {
+        result = await api('/api/users', {
+          method: 'POST',
+          body: {
+            ...payload,
+            username: usernameInput.value.trim(),
+            password: passwordInput.value,
+          },
+        });
+      }
+      if (result.ok) {
+        toast('تم الحفظ');
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        setTimeout(() => window.location.reload(), 700);
+      } else {
+        toast(result.error, 'error');
+      }
+    });
+
+    // Exposed handlers used by inline onclick attributes in users.html.
+    initUsersPage.edit = (user) => openForm(user);
+    initUsersPage.remove = async (username) => {
+      if (!confirm(`حذف المستخدم ${username}؟ لا يمكن التراجع.`)) return;
+      const result = await api(`/api/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+      if (result.ok) { toast('تم حذف المستخدم', 'warning'); setTimeout(() => window.location.reload(), 700); }
+      else toast(result.error, 'error');
+    };
+    initUsersPage.resetPassword = async (username) => {
+      const pwd = prompt(`كلمة مرور جديدة للمستخدم ${username} (8 أحرف على الأقل):`);
+      if (pwd === null) return;
+      const result = await api(`/api/users/${encodeURIComponent(username)}/password`, {
+        method: 'POST',
+        body: { new_password: pwd },
+      });
+      toast(result.ok ? 'تم تغيير كلمة المرور' : result.error, result.ok ? 'success' : 'error');
+    };
+  }
+
+  function showUserForm() { initUsersPage.openCreate?.(); }
+  function editUser(user) { initUsersPage.edit?.(user); }
+  function deleteUser(username) { initUsersPage.remove?.(username); }
+  function resetUserPassword(username) { initUsersPage.resetPassword?.(username); }
+
   // ---------- Userbot accounts ----------
   function userbotForm() {
     const form = document.getElementById('userbotForm');
@@ -959,6 +1119,8 @@ const TQM = (() => {
     initScheduleForm, showScheduleForm, hideScheduleForm, scheduleAction,
     retryPublish, initSettingsForms, restoreBackup, revealToken,
     collectAnalytics, showPollDetail, initManualPublish,
+    initBulkPublish, bulkPublish,
+    initUsersPage, showUserForm, editUser, deleteUser, resetUserPassword,
     userbotForm, showUserbotForm, hideUserbotForm, toggleUserbot, setDefaultUserbot,
     deleteUserbot, userbotLoginBox, testUserbot,
   };

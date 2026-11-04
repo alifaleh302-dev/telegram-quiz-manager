@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from app.api.deps import api_guard, get_services, render, require_page_session
+from app.api.deps import (
+    get_services,
+    render,
+    require_page_permission,
+    require_permission,
+)
 
 router = APIRouter(tags=["schedules"])
 
@@ -32,7 +37,9 @@ class ScheduleIn(BaseModel):
 
 
 @router.get("/schedules", response_class=HTMLResponse)
-async def schedules_page(request: Request, session=Depends(require_page_session)) -> Response:
+async def schedules_page(
+    request: Request, session=Depends(require_page_permission('schedules'))
+) -> Response:
     if isinstance(session, RedirectResponse):
         return session
     services = get_services(request)
@@ -53,7 +60,7 @@ async def schedules_page(request: Request, session=Depends(require_page_session)
 
 
 @router.get("/api/schedules")
-async def list_schedules(request: Request, _: Any = Depends(api_guard)) -> dict[str, Any]:
+async def list_schedules(request: Request, _: Any = Depends(require_permission('schedules'))) -> dict[str, Any]:
     services = get_services(request)
     schedules = services.schedules.list_schedules()
     for schedule in schedules:
@@ -63,7 +70,7 @@ async def list_schedules(request: Request, _: Any = Depends(api_guard)) -> dict[
 
 @router.post("/api/schedules", status_code=201)
 async def create_schedule(
-    request: Request, payload: ScheduleIn, session: Any = Depends(api_guard)
+    request: Request, payload: ScheduleIn, session: Any = Depends(require_permission('schedules'))
 ) -> dict[str, Any]:
     services = get_services(request)
     schedule = services.schedules.create(payload.model_dump(), actor=session.username)
@@ -76,7 +83,7 @@ async def update_schedule(
     request: Request,
     schedule_id: str,
     payload: ScheduleIn,
-    session: Any = Depends(api_guard),
+    session: Any = Depends(require_permission('schedules')),
 ) -> dict[str, Any]:
     services = get_services(request)
     schedule = services.schedules.update(
@@ -88,7 +95,7 @@ async def update_schedule(
 
 @router.post("/api/schedules/{schedule_id}/toggle")
 async def toggle_schedule(
-    request: Request, schedule_id: str, session: Any = Depends(api_guard)
+    request: Request, schedule_id: str, session: Any = Depends(require_permission('schedules'))
 ) -> dict[str, Any]:
     services = get_services(request)
     schedule = services.schedules.get(schedule_id)
@@ -103,7 +110,7 @@ async def toggle_schedule(
 
 @router.post("/api/schedules/{schedule_id}/skip-next")
 async def skip_next(
-    request: Request, schedule_id: str, session: Any = Depends(api_guard)
+    request: Request, schedule_id: str, session: Any = Depends(require_permission('schedules'))
 ) -> dict[str, Any]:
     services = get_services(request)
 
@@ -124,7 +131,7 @@ async def skip_next(
 
 @router.post("/api/schedules/{schedule_id}/run-now")
 async def run_now(
-    request: Request, schedule_id: str, session: Any = Depends(api_guard)
+    request: Request, schedule_id: str, session: Any = Depends(require_permission('schedules'))
 ) -> dict[str, Any]:
     services = get_services(request)
     result = await services.engine.trigger_now(schedule_id)
@@ -133,7 +140,7 @@ async def run_now(
 
 @router.delete("/api/schedules/{schedule_id}")
 async def delete_schedule(
-    request: Request, schedule_id: str, session: Any = Depends(api_guard)
+    request: Request, schedule_id: str, session: Any = Depends(require_permission('schedules'))
 ) -> dict[str, Any]:
     services = get_services(request)
     services.schedules.delete(schedule_id, actor=session.username)

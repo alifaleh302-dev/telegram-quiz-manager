@@ -5,15 +5,19 @@
 
 {% block topbar_actions %}
 <div class="d-flex gap-2 flex-wrap">
+  {% if 'automation' in permissions %}
   <button class="btn btn-sm btn-success" onclick="TQM.quickAction('/api/publishing/resume','تشغيل النشر')">
     <i class="bi bi-play-fill"></i> تشغيل النشر
   </button>
   <button class="btn btn-sm btn-warning" onclick="TQM.quickAction('/api/publishing/pause','إيقاف النشر')">
     <i class="bi bi-pause-fill"></i> إيقاف النشر
   </button>
+  {% endif %}
+  {% if 'publish' in permissions %}
   <button class="btn btn-sm btn-primary" onclick="TQM.publishNow()">
     <i class="bi bi-send-fill"></i> نشر سؤال الآن
   </button>
+  {% endif %}
 </div>
 {% endblock %}
 
