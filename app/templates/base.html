@@ -25,21 +25,31 @@
       <a class="nav-item {{ 'active' if active_page == 'dashboard' }}" href="/">
         <i class="bi bi-speedometer2"></i> لوحة التحكم
       </a>
+      {% if 'questions' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'questions' }}" href="/questions">
         <i class="bi bi-collection"></i> بنك الأسئلة
       </a>
+      {% endif %}
+      {% if 'channels' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'channels' }}" href="/channels">
         <i class="bi bi-broadcast"></i> القنوات
       </a>
+      {% endif %}
+      {% if 'schedules' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'schedules' }}" href="/schedules">
         <i class="bi bi-calendar2-week"></i> الجدولة
       </a>
+      {% endif %}
+      {% if is_admin %}
       <a class="nav-item {{ 'active' if active_page == 'history' }}" href="/history">
         <i class="bi bi-journal-text"></i> سجل النشر
       </a>
+      {% endif %}
+      {% if 'analytics' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'analytics' }}" href="/analytics">
         <i class="bi bi-bar-chart-line"></i> الإحصائيات
       </a>
+      {% endif %}
       {% if is_admin %}
       <a class="nav-item {{ 'active' if active_page == 'users' }}" href="/users">
         <i class="bi bi-people"></i> المستخدمون

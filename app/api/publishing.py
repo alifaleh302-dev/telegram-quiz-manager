@@ -9,10 +9,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from app.api.deps import (
-    api_guard,
     get_services,
     render,
-    require_page_session,
+    require_admin,
+    require_admin_page,
     require_permission,
 )
 from app.storage.validators import ValidationError
@@ -38,7 +38,7 @@ class BulkPublishIn(BaseModel):
 
 @router.get("/history", response_class=HTMLResponse)
 async def history_page(
-    request: Request, session=Depends(require_page_session), status: str = ""
+    request: Request, session=Depends(require_admin_page), status: str = ""
 ) -> Response:
     if isinstance(session, RedirectResponse):
         return session
@@ -68,7 +68,7 @@ async def history_page(
 
 @router.get("/api/history")
 async def list_history(
-    request: Request, _: Any = Depends(api_guard), status: str = "", limit: int = 100
+    request: Request, _: Any = Depends(require_admin), status: str = "", limit: int = 100
 ) -> dict[str, Any]:
     services = get_services(request)
     return {

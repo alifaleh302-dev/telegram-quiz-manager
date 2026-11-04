@@ -93,6 +93,7 @@
 </div>
 
 <div class="grid-two">
+  {% if is_admin %}
   <div class="panel">
     <div class="panel-header"><h2><i class="bi bi-activity"></i> آخر العمليات</h2>
       <a class="panel-link" href="/history">عرض الكل</a></div>
@@ -112,6 +113,7 @@
       {% endif %}
     </div>
   </div>
+  {% endif %}
 
   <div class="panel">
     <div class="panel-header"><h2><i class="bi bi-send-check"></i> ملخص النشر</h2></div>

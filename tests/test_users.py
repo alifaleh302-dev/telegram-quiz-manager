@@ -417,6 +417,107 @@ def test_settings_page_hides_system_panels_from_regular_users(app_client) -> Non
     assert "النسخ الاحتياطي والاستعادة" in admin_page.text
 
 
+def test_dashboard_hides_activity_feed_from_regular_users(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _new_user(app_client, headers, "editor", permissions=["questions"])
+
+    app_client.cookies.clear()
+    _login(app_client, "editor", "UserPassword123!")
+    page = app_client.get("/")
+    assert page.status_code == 200
+    # The system audit feed and its "view all" shortcut are admin-only.
+    assert "آخر العمليات" not in page.text
+    assert "عرض الكل" not in page.text
+    # The user's own publishing summary stays.
+    assert "ملخص النشر" in page.text
+
+    app_client.cookies.clear()
+    _login(app_client)
+    admin_page = app_client.get("/")
+    assert "آخر العمليات" in admin_page.text
+
+
+def test_dashboard_api_hides_recent_from_regular_users(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _new_user(app_client, headers, "editor", permissions=["questions"])
+
+    app_client.cookies.clear()
+    _login(app_client, "editor", "UserPassword123!")
+    body = app_client.get("/api/dashboard").json()
+    assert "recent" not in body
+    assert "questions" in body
+
+    app_client.cookies.clear()
+    _login(app_client)
+    assert "recent" in app_client.get("/api/dashboard").json()
+
+
+def test_sidebar_hides_tabs_without_the_grant(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _new_user(app_client, headers, "editor", permissions=["questions"])
+
+    app_client.cookies.clear()
+    _login(app_client, "editor", "UserPassword123!")
+    page = app_client.get("/")
+    assert page.status_code == 200
+    # Granted tab stays; ungranted ones and admin-only tabs disappear.
+    assert 'href="/questions"' in page.text
+    for href in ('href="/channels"', 'href="/schedules"', 'href="/analytics"',
+                 'href="/users"', 'href="/history"'):
+        assert href not in page.text, href
+    # Settings is always reachable (self-service account panel).
+    assert 'href="/settings"' in page.text
+
+    app_client.cookies.clear()
+    _login(app_client)
+    admin_page = app_client.get("/")
+    for href in ('href="/questions"', 'href="/channels"', 'href="/schedules"',
+                 'href="/history"', 'href="/analytics"', 'href="/users"'):
+        assert href in admin_page.text, href
+
+
+def test_sidebar_shows_each_tab_when_granted(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _new_user(
+        app_client,
+        headers,
+        "operator",
+        permissions=["questions", "channels", "schedules", "analytics"],
+    )
+
+    app_client.cookies.clear()
+    _login(app_client, "operator", "UserPassword123!")
+    page = app_client.get("/")
+    for href in ('href="/questions"', 'href="/channels"', 'href="/schedules"',
+                 'href="/analytics"'):
+        assert href in page.text, href
+    # History and users remain admin-only regardless of grants.
+    assert 'href="/history"' not in page.text
+    assert 'href="/users"' not in page.text
+
+
+def test_history_page_and_api_are_admin_only(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _new_user(app_client, headers, "editor", permissions=["questions", "publish"])
+
+    app_client.cookies.clear()
+    _login(app_client, "editor", "UserPassword123!")
+    page = app_client.get("/history", follow_redirects=False)
+    assert page.status_code == 303
+    assert page.headers["location"] == "/"
+    assert app_client.get("/api/history").status_code == 403
+
+    app_client.cookies.clear()
+    _login(app_client)
+    assert app_client.get("/history").status_code == 200
+    assert app_client.get("/api/history").status_code == 200
+
+
 def test_regular_user_cannot_change_system_settings(app_client) -> None:
     _login(app_client)
     headers = _headers(app_client)
