@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}القنوات — {{ app_name }}{% endblock %}
+{% block page_title %}إدارة القنوات{% endblock %}
+{% block page_subtitle %}أضف القنوات المستهدفة واختبر إمكانية النشر{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-sm btn-primary" onclick="TQM.showChannelForm()">
+  <i class="bi bi-plus-lg"></i> قناة جديدة
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="panel">
+  <div class="panel-header">
+    <h2><i class="bi bi-info-circle"></i> حالة البوت</h2>
+  </div>
+  <div class="panel-body">
+    {% if bot and not bot.dry_run %}
+      <p class="mb-0">متصل كـ <strong>@{{ bot.username }}</strong> (المعرف: <code>{{ bot.id }}</code>)</p>
+    {% elif bot and bot.dry_run %}
+      <p class="mb-0 text-warning">
+        <i class="bi bi-flask"></i> وضع تجريبي — لم يتم ضبط توكن البوت. لن تُرسل رسائل فعلية.
+      </p>
+    {% else %}
+      <p class="mb-0 text-danger">
+        <i class="bi bi-x-circle"></i> تعذّر الاتصال بـ Telegram. تحقق من صحة التوكن واتصال الشبكة.
+      </p>
+    {% endif %}
+    <p class="hint mt-2 mb-0">
+      يجب أن يكون البوت مشرفاً في القناة مع صلاحية «نشر الرسائل» و«إدارة الاستطلاعات».
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header"><h2><i class="bi bi-broadcast"></i> القنوات المضافة</h2></div>
+  <div class="panel-body">
+    {% if channels %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>المعرف</th><th>الاسم</th><th>Chat ID</th><th>الحالة</th>
+            <th>آخر نشر</th><th class="text-end">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for channel in channels %}
+          <tr>
+            <td><code>{{ channel.id }}</code>{% if channel.default %} <span class="badge text-bg-primary">افتراضية</span>{% endif %}</td>
+            <td>{{ channel.name }}</td>
+            <td><code>{{ channel.chat_id }}</code></td>
+            <td>
+              <span class="badge {{ 'text-bg-success' if channel.enabled else 'text-bg-secondary' }}">
+                {{ 'مفعّلة' if channel.enabled else 'معطّلة' }}
+              </span>
+            </td>
+            <td class="small text-secondary">
+              {% if channel.last_publish_at %}
+                {{ channel.last_publish_at }}
+                <span class="badge {{ 'text-bg-success' if channel.last_publish_status == 'success' else 'text-bg-danger' }}">
+                  {{ channel.last_publish_status }}
+                </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-info" onclick="TQM.testChannel('{{ channel.id }}')" title="اختبار">
+                  <i class="bi bi-send-check"></i>
+                </button>
+                <button class="btn btn-outline-light" onclick="TQM.toggleChannel('{{ channel.id }}')"
+                        title="{{ 'تعطيل' if channel.enabled else 'تفعيل' }}">
+                  <i class="bi {{ 'bi-toggle-on' if channel.enabled else 'bi-toggle-off' }}"></i>
+                </button>
+                {% if not channel.default %}
+                <button class="btn btn-outline-primary" onclick="TQM.setDefaultChannel('{{ channel.id }}')" title="تعيين افتراضية">
+                  <i class="bi bi-star"></i>
+                </button>
+                {% endif %}
+                <button class="btn btn-outline-danger" onclick="TQM.deleteChannel('{{ channel.id }}')" title="حذف">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-broadcast-pin"></i><br>
+      لا توجد قنوات بعد. اضغط «قناة جديدة» وأدخل معرف القناة (مثل <code>@my_channel</code>).
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel" id="channelFormPanel" hidden>
+  <div class="panel-header"><h2><i class="bi bi-plus-circle"></i> إضافة قناة</h2></div>
+  <div class="panel-body">
+    <form id="channelForm" class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">اسم القناة <span class="req">*</span></label>
+        <input class="form-control" name="name" required maxlength="100">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Chat ID <span class="req">*</span></label>
+        <input class="form-control" name="chat_id" required placeholder="@channel أو -1001234567890">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">وصف <span class="hint">(اختياري)</span></label>
+        <input class="form-control" name="description" maxlength="200">
+      </div>
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        <button class="btn btn-outline-secondary" type="button" onclick="TQM.hideChannelForm()">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => TQM.initChannelForm());
+</script>
+{% endblock %}

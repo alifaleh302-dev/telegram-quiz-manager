@@ -1,0 +1,183 @@
+# Telegram Quiz Manager
+
+لوحة تحكم ويب عربية لإدارة بوت Telegram ونشر اختبارات **Quiz** (إجابة صحيحة واحدة)
+تلقائياً في قناة أو عدة قنوات، وفق جداول نشر مخصّصة.
+
+> الواجهة كلها من المتصفح. البوت يعمل في الخلفية وينفّذ الجدولة والنشر.
+
+---
+
+## 1. المزايا
+
+| القسم | ما يوفّره |
+| --- | --- |
+| لوحة التحكم | إجمالي/منشور/متبقي الأسئلة، حالة النشر، النشر القادم، آخر العمليات، رسم بياني أسبوعي |
+| بنك الأسئلة | إضافة، تعديل، حذف، نسخ، بحث، تصفية (تصنيف/حالة/صعوبة)، إجراءات جماعية، معاينة، استيراد وتصدير JSON |
+| محرر السؤال | خيارات ديناميكية (2–10)، اختيار الإجابة الصحيحة، شرح، تصنيف، صعوبة، حالة، معاينة مباشرة |
+| القنوات | إضافة/حذف، قناة افتراضية، تفعيل/تعطيل، اختبار النشر، آخر عملية ناجحة |
+| الجدولة | يومي، عدة مرات يومياً، أيام محددة، فاصل زمني، تاريخ محدد، يدوي فقط + نافذة بداية/نهاية ومنطقة زمنية |
+| سجل النشر | كل محاولة: السؤال، القناة، الوقت، الحالة، Message ID، الخطأ، عدد المحاولات + إعادة المحاولة يدوياً |
+| الإعدادات | إعدادات النشر، كلمة المرور، سجل تسجيل الدخول، النسخ الاحتياطي والاستعادة والتصدير ZIP |
+
+---
+
+## 2. التشغيل السريع
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # ضع الناتج في SECRET_KEY
+
+python run.py            # أو: uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+ثم افتح <http://localhost:8000> وسجّل الدخول ببيانات `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+من ملف `.env`.
+
+**وضع تجريبي:** إذا كان `TELEGRAM_BOT_TOKEN` فارغاً يعمل النظام كاملاً دون إرسال أي رسالة
+فعلية — تُسجَّل العمليات في السجل كأنها نجحت مع وسم «تجريبي». هذا مفيد لتجربة الجدولة.
+
+### ربط البوت الحقيقي
+
+1. أنشئ بوتاً عبر [@BotFather](https://t.me/BotFather) وخذ التوكن.
+2. أضف البوت إلى القناة **كمشرف** مع صلاحيتي «نشر الرسائل» و«إدارة الاستطلاعات».
+3. ضع التوكن في `TELEGRAM_BOT_TOKEN` داخل `.env` وأعد تشغيل الخادم.
+4. من صفحة «القنوات» أضف القناة (مثال: `@my_channel` أو `-1001234567890`) واضغط «اختبار».
+
+---
+
+## 3. البنية
+
+```
+app/
+├── main.py                 # إنشاء التطبيق، دورة الحياة، تسجيل الراوترات
+├── core/
+│   ├── config.py           # الإعدادات من متغيرات البيئة
+│   ├── logging.py          # تسجيل موحّد إلى ملف ودوران الملفات
+│   └── security.py         # Argon2، جلسات موقّعة، رموز CSRF
+├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, settings, auth
+├── services/               # منطق العمل: questions, channels, schedules, publishing, settings, backup, audit
+├── telegram/               # العميل (send_quiz / test_channel / get_me) ومدير البوت (polling/webhook)
+├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler)
+├── storage/                # JSON مع كتابة ذرّية وقفل ملفات + التحقق من الصحة
+├── templates/              # واجهات Jinja2 (RTL عربية)
+└── static/                 # CSS و JavaScript
+
+data/      # questions / channels / schedules / publishing_history / settings / users / audit_log
+logs/      # app.log
+tests/     # 103 اختباراً
+tools/     # smoke_test.sh
+```
+
+**لماذا JSON؟** لتفادي قاعدة بيانات ثقيلة على سيرفر صغير. الطبقة معزولة داخل
+`storage/`، لذا يمكن استبدالها بـ SQLite لاحقاً دون تغيير الخدمات أو الواجهات.
+
+---
+
+## 4. واجهات API
+
+كل `/api/*` محمي بالجلسة، والعمليات المُعدِّلة تتطلب ترويسة `X-CSRF-Token`.
+
+| Method | Endpoint | الوظيفة |
+| --- | --- | --- |
+| GET | `/api/dashboard` | بيانات اللوحة |
+| GET | `/api/questions` | عرض/بحث/تصفية الأسئلة |
+| POST | `/api/questions` | إضافة سؤال |
+| PUT | `/api/questions/{id}` | تعديل سؤال |
+| DELETE | `/api/questions/{id}` | حذف سؤال |
+| POST | `/api/questions/bulk` | إجراء جماعي (حذف/تحديث الحالة/تصنيف) |
+| POST | `/api/questions/import` | استيراد JSON |
+| GET | `/api/questions/export` | تصدير JSON |
+| GET/POST | `/api/channels` | عرض/إضافة قناة |
+| POST | `/api/channels/{id}/test` | اختبار النشر |
+| POST | `/api/channels/{id}/default` | تعيين القناة الافتراضية |
+| GET/POST | `/api/schedules` | عرض/إنشاء جدول |
+| PUT/DELETE | `/api/schedules/{id}` | تعديل/حذف جدول |
+| POST | `/api/schedules/{id}/toggle` | تفعيل/إيقاف مؤقت |
+| POST | `/api/schedules/{id}/skip-next` | تجاوز موعد واحد |
+| POST | `/api/schedules/{id}/run-now` | تشغيل فوري |
+| POST | `/api/publishing/publish-now` | نشر سؤال الآن |
+| POST | `/api/publishing/pause` · `/resume` | إيقاف/استئناف النشر |
+| POST | `/api/publishing/retry/{id}` | إعادة محاولة عملية فاشلة |
+| POST | `/api/publishing/reconcile` | مراجعة العمليات غير المحسومة |
+| GET | `/api/history` | سجل النشر + الإحصاءات |
+| GET/PUT | `/api/settings` | الإعدادات |
+| POST | `/api/settings/password` | تغيير كلمة المرور |
+| POST | `/api/backups/create` · `/api/export` | نسخة احتياطية / تصدير ZIP |
+| GET | `/healthz` | فحص الحالة |
+
+---
+
+## 5. ضمانات دورة حياة النشر
+
+هذه القواعد مطبَّقة في الكود ومغطاة بالاختبارات:
+
+1. **لا يُعتبر السؤال منشوراً إلا بعد تأكيد Telegram** — يُحدَّث إلى `published` بعد نجاح الإرسال فقط.
+2. **لا يُعاد النشر عند إعادة التشغيل** — تُختار الأسئلة بحالة `ready` فقط، والمنشورة تُستبعد.
+3. **لا يُحجز السؤال نهائياً قبل التأكيد** — تُسجَّل محاولة `pending` قبل الاتصال، ثم تُحدَّث.
+4. **لا نشران متعارضان** — قفل `asyncio` + منع تكرار `pending` لنفس (السؤال، القناة).
+5. **إعادة المحاولة للأخطاء المؤقتة فقط** — أخطاء الصلاحيات والمدخلات غير قابلة للإعادة.
+6. **تنبيه واضح عند مشاكل الصلاحيات** — يُسجَّل الخطأ مع رمزه ويظهر في السجل واللوحة.
+7. **حالة «نجاح ثم انقطاع قبل الحفظ»** — تُوسم الصفوف المعلّقة القديمة بـ `unknown` وتُعرض
+   للمراجعة اليدوية بدل إعادة الإرسال أعمى.
+
+---
+
+## 6. الأمان
+
+- **كلمة المرور** بـ Argon2id (مع ترقية تلقائية عند تغيّر البارامترات).
+- **الجلسات** ملفات موقّعة بـ itsdangerous، كوكي `HttpOnly` + `SameSite=Lax`، عمر محدود.
+- **CSRF** رمز لكل جلسة يُتحقق منه في كل عملية مُعدِّلة.
+- **الأسرار** (توكن البوت، `SECRET_KEY`) من متغيرات البيئة فقط — لا تُخزَّن في ملفات JSON.
+- **التحقق من المدخلات** قبل أي كتابة، و**كتابة ذرّية** (ملف مؤقت + `os.replace`) مع قفل ملفات.
+- **الإعدادات** ترفض أي مفتاح غير معروف بدل تخزينه بصمت.
+
+قبل النشر على الإنترنت: شغّل خلف HTTPS، اضبط `SESSION_COOKIE_SECURE=true`، واستخدم
+`SECRET_KEY` عشوائياً طويلاً.
+
+---
+
+## 7. الاختبارات
+
+```bash
+python -m pytest              # 103 اختباراً
+bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
+```
+
+تغطي الاختبارات: التخزين الذرّي والنسخ الاحتياطي، التحقق من صحة الأسئلة، الأمان وCSRF،
+الجدولة (بناء المحفّزات وحدود النشر)، دورة النشر، وضمانات إعادة التشغيل، وواجهات API كاملة
+عبر `TestClient`. الشبكة الوحيدة المُستبدلة في الاختبارات هي Telegram.
+
+---
+
+## 8. هيكل ملفات البيانات
+
+```json
+// data/questions.json
+{"version": 1, "counter": 5, "questions": [
+  {"id": "Q0001", "question": "...", "options": ["..."], "correct_option_id": 1,
+   "explanation": "...", "category": "...", "difficulty": "easy",
+   "status": "ready", "created_at": "...", "updated_at": "..."}
+]}
+
+// data/schedules.json
+{"schedules": [{"id": "SCH001", "channel_id": "CH001", "enabled": true,
+  "type": "times", "times": ["08:00","14:00","20:00"], "timezone": "Asia/Riyadh",
+  "question_selection": "sequential", "questions_per_day": 3}]}
+```
+
+أنواع الجدولة: `daily` · `times` · `weekdays` · `interval` · `once` · `manual`.
+طرق اختيار الأسئلة: `sequential` · `random` · `category`.
+
+---
+
+## 9. النشر على سيرفر
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+
+> **مهم:** استخدم عاملاً واحداً (`--workers 1`). المجدول وحالة النشر تعمل داخل العملية،
+> وتشغيل عدة عمليات سيؤدي إلى نشر مكرر. للتوسّع أفقياً، افصل المجدول في خدمة مستقلة.

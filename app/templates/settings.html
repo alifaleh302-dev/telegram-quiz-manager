@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}الإعدادات — {{ app_name }}{% endblock %}
+{% block page_title %}الإعدادات{% endblock %}
+{% block page_subtitle %}إعدادات البوت والنشر والنسخ الاحتياطي والحساب{% endblock %}
+
+{% block content %}
+<div class="grid-two">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-robot"></i> حالة البوت والتوكن</h2></div>
+    <div class="panel-body">
+      <dl class="settings-list">
+        <dt>وضع التشغيل</dt>
+        <dd>
+          {% if env.dry_run %}
+            <span class="badge text-bg-warning">تجريبي — لا يوجد توكن</span>
+          {% else %}
+            <span class="badge text-bg-success">متصل</span>
+          {% endif %}
+        </dd>
+        <dt>اسم البوت</dt><dd>{{ ('@' + bot.username) if bot and bot.username else '—' }}</dd>
+        <dt>نمط Telegram</dt><dd><code>{{ env.telegram_mode }}</code></dd>
+        <dt>مجلد البيانات</dt><dd><code>{{ env.data_dir }}</code></dd>
+      </dl>
+      <p class="hint">
+        <i class="bi bi-shield-lock"></i>
+        توكن البوت وكلمة مرور المدير لا يُخزّنان في ملفات JSON؛
+        يتم ضبطهما عبر متغيرات البيئة في ملف <code>.env</code>.
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-sliders"></i> إعدادات النشر</h2></div>
+    <div class="panel-body">
+      <form id="settingsForm">
+        <div class="mb-3">
+          <label class="form-label">المنطقة الزمنية الافتراضية</label>
+          <input class="form-control" name="timezone" value="{{ config.timezone }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">الحد اليومي العام <span class="hint">(0 = غير محدود)</span></label>
+          <input class="form-control" type="number" name="daily_limit" min="0"
+                 value="{{ config.daily_limit or 0 }}">
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="publishing_enabled"
+                 id="publishingEnabled" {{ 'checked' if config.publishing_enabled }}>
+          <label class="form-check-label" for="publishingEnabled">النشر مفعّل</label>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="poll_explanation"
+                 id="pollExplanation" {{ 'checked' if config.poll_options.explanation }}>
+          <label class="form-check-label" for="pollExplanation">إظهار الشرح بعد الإجابة</label>
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" name="poll_anonymous"
+                 id="pollAnonymous" {{ 'checked' if config.poll_options.anonymous }}>
+          <label class="form-check-label" for="pollAnonymous">استطلاع مجهول الهوية</label>
+        </div>
+        <div class="row g-3">
+          <div class="col-6">
+            <label class="form-label">مدة إغلاق الاختبار (ثانية) <span class="hint">(0 = بدون)</span></label>
+            <input class="form-control" type="number" name="open_period" min="0"
+                   value="{{ config.poll_options.open_period }}">
+          </div>
+          <div class="col-3">
+            <label class="form-label">أقصى محاولات</label>
+            <input class="form-control" type="number" name="max_attempts" min="1"
+                   value="{{ config.retry.max_attempts }}">
+          </div>
+          <div class="col-3">
+            <label class="form-label">تأخير الإعادة (ث)</label>
+            <input class="form-control" type="number" name="delay_seconds" min="5"
+                   value="{{ config.retry.delay_seconds }}">
+          </div>
+        </div>
+        <button class="btn btn-primary mt-3" type="submit"><i class="bi bi-save"></i> حفظ الإعدادات</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="grid-two">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-shield-lock"></i> الحساب وكلمة المرور</h2></div>
+    <div class="panel-body">
+      <form id="profileForm" class="mb-4">
+        <div class="mb-2">
+          <label class="form-label">اسم المستخدم</label>
+          <input class="form-control" value="{{ session.username }}" disabled>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">البريد الإلكتروني <span class="hint">(اختياري)</span></label>
+          <input class="form-control" name="email" value="{{ user.email if user else '' }}">
+        </div>
+        <button class="btn btn-sm btn-outline-light" type="submit">حفظ البيانات</button>
+      </form>
+
+      <form id="passwordForm">
+        <div class="mb-2">
+          <label class="form-label">كلمة المرور الحالية</label>
+          <input class="form-control" type="password" name="current_password" required>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">كلمة المرور الجديدة</label>
+          <input class="form-control" type="password" name="new_password" minlength="8" required>
+        </div>
+        <button class="btn btn-sm btn-warning" type="submit">تغيير كلمة المرور</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-clock-history"></i> سجل تسجيل الدخول</h2></div>
+    <div class="panel-body">
+      {% if logins %}
+      <ul class="login-list">
+        {% for item in logins %}
+        <li class="{{ 'ok' if item.success else 'fail' }}">
+          <i class="bi {{ 'bi-check-circle-fill text-success' if item.success else 'bi-x-circle-fill text-danger' }}"></i>
+          <span>{{ item.username }}</span>
+          <span class="small text-secondary">{{ item.ip or '—' }}</span>
+          <span class="ms-auto small text-secondary">{{ item.timestamp }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty-state">لا يوجد سجل دخول بعد.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header"><h2><i class="bi bi-hdd-stack"></i> النسخ الاحتياطي والاستعادة</h2></div>
+  <div class="panel-body">
+    <div class="d-flex gap-2 flex-wrap mb-3">
+      <button class="btn btn-sm btn-primary" onclick="TQM.quickAction('/api/backups/create','إنشاء نسخة احتياطية')">
+        <i class="bi bi-plus-circle"></i> إنشاء نسخة الآن
+      </button>
+      <a class="btn btn-sm btn-outline-light" href="/api/export">
+        <i class="bi bi-download"></i> تصدير كل البيانات (ZIP)
+      </a>
+      <button class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#restoreModal">
+        <i class="bi bi-upload"></i> استعادة من ملف
+      </button>
+    </div>
+
+    {% if backups %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead><tr><th>النسخة</th><th>الملفات</th><th>الحجم</th><th class="text-end">إجراء</th></tr></thead>
+        <tbody>
+          {% for backup in backups %}
+          <tr>
+            <td><code>{{ backup.name }}</code></td>
+            <td>{{ backup.files }}</td>
+            <td>{{ (backup.size / 1024) | round(1) }} KB</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-danger" onclick="TQM.restoreBackup('{{ backup.name }}')">
+                <i class="bi bi-arrow-counterclockwise"></i> استعادة
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">لا توجد نسخ احتياطية بعد.</p>
+    {% endif %}
+    <p class="hint">
+      <i class="bi bi-info-circle"></i>
+      تُنشأ نسخة تلقائياً قبل كل تعديل مهم على ملفات البيانات، وتُحفظ في
+      <code>data/backups/</code>.
+    </p>
+  </div>
+</div>
+
+<div class="modal fade" id="restoreModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form id="restoreForm">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-upload"></i> استعادة من أرشيف ZIP</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning small">
+            <i class="bi bi-exclamation-triangle"></i>
+            سيتم استبدال ملفات البيانات الحالية بمحتوى الأرشيف.
+            تُؤخذ نسخة احتياطية تلقائياً قبل الاستعادة.
+          </div>
+          <input class="form-control" type="file" name="file" accept=".zip" required>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-danger" type="submit">استعادة</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => TQM.initSettingsForms());
+</script>
+{% endblock %}

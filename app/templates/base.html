@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/static/css/app.css" rel="stylesheet">
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <i class="bi bi-patch-question-fill"></i>
+      <div>
+        <span class="brand-title">Telegram Quiz</span>
+        <span class="brand-sub">Manager</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item {{ 'active' if active_page == 'dashboard' }}" href="/">
+        <i class="bi bi-speedometer2"></i> لوحة التحكم
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'questions' }}" href="/questions">
+        <i class="bi bi-collection"></i> بنك الأسئلة
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'channels' }}" href="/channels">
+        <i class="bi bi-broadcast"></i> القنوات
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'schedules' }}" href="/schedules">
+        <i class="bi bi-calendar2-week"></i> الجدولة
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'history' }}" href="/history">
+        <i class="bi bi-journal-text"></i> سجل النشر
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'settings' }}" href="/settings">
+        <i class="bi bi-sliders"></i> الإعدادات
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      {% if dry_run %}
+      <div class="dry-run-badge" title="لم يتم ضبط TELEGRAM_BOT_TOKEN">
+        <i class="bi bi-flask"></i> وضع تجريبي
+      </div>
+      {% else %}
+      <div class="live-badge"><i class="bi bi-broadcast-pin"></i> البوت متصل</div>
+      {% endif %}
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="btn btn-sm btn-outline-secondary w-100" type="submit">
+          <i class="bi bi-box-arrow-right"></i> خروج
+        </button>
+      </form>
+    </div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <div>
+        <h1 class="page-title">{% block page_title %}{{ app_name }}{% endblock %}</h1>
+        <p class="page-subtitle">{% block page_subtitle %}{% endblock %}</p>
+      </div>
+      <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+    </header>
+
+    <div id="flash-area"></div>
+
+    <section class="content">
+      {% block content %}{% endblock %}
+    </section>
+  </main>
+</div>
+
+<div id="toast-area" class="toast-area"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.12/dist/htmx.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="/static/js/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

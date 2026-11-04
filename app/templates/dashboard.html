@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}لوحة التحكم — {{ app_name }}{% endblock %}
+{% block page_title %}لوحة التحكم{% endblock %}
+{% block page_subtitle %}نظرة عامة على بنك الأسئلة والنشر{% endblock %}
+
+{% block topbar_actions %}
+<div class="d-flex gap-2 flex-wrap">
+  <button class="btn btn-sm btn-success" onclick="TQM.quickAction('/api/publishing/resume','تشغيل النشر')">
+    <i class="bi bi-play-fill"></i> تشغيل النشر
+  </button>
+  <button class="btn btn-sm btn-warning" onclick="TQM.quickAction('/api/publishing/pause','إيقاف النشر')">
+    <i class="bi bi-pause-fill"></i> إيقاف النشر
+  </button>
+  <button class="btn btn-sm btn-primary" onclick="TQM.publishNow()">
+    <i class="bi bi-send-fill"></i> نشر سؤال الآن
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-icon bg-primary-subtle"><i class="bi bi-collection"></i></div>
+    <div><div class="stat-value" id="stat-total">{{ questions.total }}</div>
+      <div class="stat-label">إجمالي الأسئلة</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-success-subtle"><i class="bi bi-check2-circle"></i></div>
+    <div><div class="stat-value" id="stat-published">{{ questions.published }}</div>
+      <div class="stat-label">الأسئلة المنشورة</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-info-subtle"><i class="bi bi-hourglass-split"></i></div>
+    <div><div class="stat-value" id="stat-ready">{{ questions.ready }}</div>
+      <div class="stat-label">جاهزة للنشر</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-secondary-subtle"><i class="bi bi-pencil-square"></i></div>
+    <div><div class="stat-value">{{ questions.draft }}</div>
+      <div class="stat-label">مسودات</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon bg-warning-subtle"><i class="bi bi-broadcast"></i></div>
+    <div><div class="stat-value">{{ channels.enabled }}/{{ channels.total }}</div>
+      <div class="stat-label">قنوات مفعّلة</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon {{ 'bg-success-subtle' if publishing_enabled else 'bg-danger-subtle' }}">
+      <i class="bi {{ 'bi-broadcast-pin' if publishing_enabled else 'bi-stop-circle' }}"></i>
+    </div>
+    <div>
+      <div class="stat-value {{ 'text-success' if publishing_enabled else 'text-danger' }}">
+        {{ 'نشط' if publishing_enabled else 'متوقف' }}
+      </div>
+      <div class="stat-label">حالة النشر</div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-two">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-graph-up"></i> توزيع الأسئلة حسب التصنيف</h2></div>
+    <div class="panel-body">
+      {% if by_category %}
+      <canvas id="categoryChart" height="200"></canvas>
+      {% else %}
+      <p class="empty-state">لا توجد أسئلة بعد. ابدأ بإضافة سؤال أو استيراد ملف JSON.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-clock-history"></i> مواعيد النشر القادمة</h2></div>
+    <div class="panel-body">
+      {% if next_runs %}
+      <ul class="run-list">
+        {% for run in next_runs %}
+        <li>
+          <span class="run-name"><i class="bi bi-calendar-event"></i> {{ run.name }}</span>
+          <span class="run-time">{{ run.next_run_at or '—' }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty-state">لا توجد جداول نشطة. أنشئ جدولاً من صفحة «الجدولة».</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid-two">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-activity"></i> آخر العمليات</h2>
+      <a class="panel-link" href="/history">عرض الكل</a></div>
+    <div class="panel-body">
+      {% if recent %}
+      <ul class="activity-list">
+        {% for item in recent %}
+        <li class="level-{{ item.level }}">
+          <span class="dot"></span>
+          <span class="activity-text">{{ item.message or item.action }}</span>
+          <span class="activity-time">{{ item.timestamp }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty-state">لا توجد عمليات مسجلة بعد.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-send-check"></i> ملخص النشر</h2></div>
+    <div class="panel-body">
+      <div class="mini-stats">
+        <div><span class="mini-value text-success">{{ publishing.success }}</span><span class="mini-label">نجاح</span></div>
+        <div><span class="mini-value text-danger">{{ publishing.failed }}</span><span class="mini-label">فشل</span></div>
+        <div><span class="mini-value text-info">{{ publishing.today }}</span><span class="mini-label">اليوم</span></div>
+        <div><span class="mini-value text-warning">{{ publishing.unknown }}</span><span class="mini-label">غير محسوم</span></div>
+      </div>
+      {% if publishing.unknown %}
+      <button class="btn btn-sm btn-outline-warning mt-3"
+              onclick="TQM.quickAction('/api/publishing/reconcile','مراجعة العمليات غير المحسومة')">
+        <i class="bi bi-arrow-repeat"></i> مراجعة العمليات غير المحسومة
+      </button>
+      {% endif %}
+      <p class="hint mt-3">
+        المنطقة الزمنية: <strong>{{ timezone }}</strong> ·
+        الحد اليومي: <strong>{{ daily_limit or 'غير محدود' }}</strong>
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const categoryData = {{ by_category | tojson }};
+  document.addEventListener('DOMContentLoaded', () => {
+    if (Object.keys(categoryData).length && window.Chart) {
+      new Chart(document.getElementById('categoryChart'), {
+        type: 'doughnut',
+        data: {
+          labels: Object.keys(categoryData),
+          datasets: [{
+            data: Object.values(categoryData),
+            backgroundColor: ['#6366f1','#22c55e','#f59e0b','#06b6d4','#ef4444','#a855f7','#14b8a6','#eab308'],
+            borderWidth: 0
+          }]
+        },
+        options: {plugins: {legend: {position: 'bottom', labels: {color: '#cbd5e1'}}}}
+      });
+    }
+  });
+</script>
+{% endblock %}

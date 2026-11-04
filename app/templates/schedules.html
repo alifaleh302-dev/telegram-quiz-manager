@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}الجدولة — {{ app_name }}{% endblock %}
+{% block page_title %}جدولة النشر{% endblock %}
+{% block page_subtitle %}تحكم مخصص بمواعيد النشر لكل قناة{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-sm btn-primary" onclick="TQM.showScheduleForm()">
+  <i class="bi bi-plus-lg"></i> جدول جديد
+</button>
+{% endblock %}
+
+{% block content %}
+<div class="panel">
+  <div class="panel-header"><h2><i class="bi bi-calendar2-week"></i> الجداول الحالية</h2></div>
+  <div class="panel-body">
+    {% if schedules %}
+    <div class="schedule-grid">
+      {% for schedule in schedules %}
+      <div class="schedule-card {{ 'disabled' if not schedule.enabled }}">
+        <div class="schedule-head">
+          <div>
+            <h3>{{ schedule.name or schedule.id }}</h3>
+            <code>{{ schedule.id }}</code>
+          </div>
+          <span class="badge {{ 'text-bg-success' if schedule.enabled else 'text-bg-secondary' }}">
+            {{ 'مفعّل' if schedule.enabled else 'متوقف' }}
+          </span>
+        </div>
+        <dl class="schedule-meta">
+          <div><dt>القناة</dt><dd>
+            {% set ch = channels | selectattr('id', 'equalto', schedule.channel_id) | list %}
+            {{ ch[0].name if ch else schedule.channel_id }}
+          </dd></div>
+          <div><dt>النمط</dt><dd>
+            {% set types = {'daily':'يومي','times':'عدة مرات يومياً','weekdays':'أيام محددة','interval':'فاصل زمني','once':'تاريخ محدد','manual':'يدوي'} %}
+            {{ types.get(schedule.type, schedule.type) }}
+          </dd></div>
+          <div><dt>المواعيد</dt><dd>
+            {% if schedule.type == 'interval' %}
+              كل {{ schedule.interval_minutes }} دقيقة
+            {% elif schedule.times %}
+              {{ schedule.times | join(' · ') }}
+            {% else %}—{% endif %}
+          </dd></div>
+          {% if schedule.weekdays %}
+          <div><dt>الأيام</dt><dd>
+            {% set day_names = ['الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'] %}
+            {% for day in schedule.weekdays %}{{ day_names[day | int] }}{% if not loop.last %} · {% endif %}{% endfor %}
+          </dd></div>
+          {% endif %}
+          <div><dt>الاختيار</dt><dd>
+            {% set sels = {'sequential':'تصاعدي','random':'عشوائي','category':'حسب التصنيف'} %}
+            {{ sels.get(schedule.question_selection, schedule.question_selection) }}
+          </dd></div>
+          <div><dt>المنطقة الزمنية</dt><dd>{{ schedule.timezone }}</dd></div>
+          <div><dt>الموعد القادم</dt><dd>{{ schedule.next_run_at or '—' }}</dd></div>
+          <div><dt>نُشر بواسطته</dt><dd>{{ schedule.published_count }}</dd></div>
+        </dl>
+        <div class="schedule-actions">
+          <button class="btn btn-sm btn-outline-success" onclick="TQM.scheduleAction('{{ schedule.id }}','run-now')">
+            <i class="bi bi-lightning-charge"></i> نشر الآن
+          </button>
+          <button class="btn btn-sm btn-outline-light" onclick="TQM.scheduleAction('{{ schedule.id }}','toggle')">
+            <i class="bi {{ 'bi-pause' if schedule.enabled else 'bi-play' }}"></i>
+            {{ 'إيقاف مؤقت' if schedule.enabled else 'استئناف' }}
+          </button>
+          <button class="btn btn-sm btn-outline-warning" onclick="TQM.scheduleAction('{{ schedule.id }}','skip-next')">
+            <i class="bi bi-skip-forward"></i> تجاوز موعد
+          </button>
+          <button class="btn btn-sm btn-outline-danger" onclick="TQM.scheduleAction('{{ schedule.id }}','delete')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-calendar-x"></i><br>
+      لا توجد جداول بعد. أنشئ جدولاً لتحديد مواعيد النشر تلقائياً.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel" id="scheduleFormPanel" hidden>
+  <div class="panel-header"><h2><i class="bi bi-plus-circle"></i> إنشاء جدول</h2></div>
+  <div class="panel-body">
+    <form id="scheduleForm" class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">اسم الجدول <span class="hint">(اختياري)</span></label>
+        <input class="form-control" name="name" maxlength="100" placeholder="جدول القناة الرئيسية">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">القناة <span class="req">*</span></label>
+        <select class="form-select" name="channel_id" required>
+          {% for channel in channels %}
+          <option value="{{ channel.id }}">{{ channel.name }} ({{ channel.chat_id }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">نمط الجدولة <span class="req">*</span></label>
+        <select class="form-select" name="type" id="scheduleType">
+          <option value="daily">يومي</option>
+          <option value="times">عدة مرات يومياً</option>
+          <option value="weekdays">أيام محددة</option>
+          <option value="interval">فاصل زمني</option>
+          <option value="once">تاريخ محدد</option>
+          <option value="manual">يدوي فقط</option>
+        </select>
+      </div>
+
+      <div class="col-md-6" data-type="daily times weekdays once">
+        <label class="form-label">أوقات النشر</label>
+        <div class="times-list" id="timesList">
+          <div class="time-row">
+            <input class="form-control" type="time" name="times[]" value="20:00">
+            <button class="btn btn-outline-danger btn-sm" type="button" onclick="this.parentElement.remove()">
+              <i class="bi bi-x"></i>
+            </button>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-outline-light mt-2" type="button" id="addTime">
+          <i class="bi bi-plus-lg"></i> إضافة وقت
+        </button>
+        <div class="form-text">يمكن إضافة أكثر من وقت لنفس اليوم.</div>
+      </div>
+
+      <div class="col-md-6" data-type="weekdays">
+        <label class="form-label">أيام الأسبوع</label>
+        <div class="weekday-picker">
+          {% set days = [('0','الاثنين'),('1','الثلاثاء'),('2','الأربعاء'),('3','الخميس'),('4','الجمعة'),('5','السبت'),('6','الأحد')] %}
+          {% for value, label in days %}
+          <label class="weekday-chip">
+            <input type="checkbox" name="weekdays[]" value="{{ value }}">
+            <span>{{ label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="col-md-6" data-type="interval">
+        <label class="form-label">الفاصل الزمني (بالدقائق)</label>
+        <input class="form-control" type="number" name="interval_minutes" value="180" min="5" max="1440">
+        <div class="form-text">بين 5 دقائق و 1440 دقيقة.</div>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">طريقة اختيار الأسئلة</label>
+        <select class="form-select" name="question_selection" id="selectionMode">
+          <option value="sequential">تصاعدي حسب المعرف</option>
+          <option value="random">عشوائي</option>
+          <option value="category">حسب التصنيف</option>
+        </select>
+      </div>
+      <div class="col-md-3" id="categoryFilterWrap" hidden>
+        <label class="form-label">التصنيف</label>
+        <input class="form-control" name="category_filter" list="scheduleCategories">
+        <datalist id="scheduleCategories">
+          {% for category in categories %}<option value="{{ category }}">{% endfor %}
+        </datalist>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">عدد الأسئلة اليومية <span class="hint">(0 = غير محدود)</span></label>
+        <input class="form-control" type="number" name="questions_per_day" value="0" min="0">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">المنطقة الزمنية</label>
+        <input class="form-control" name="timezone" value="{{ timezone }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">تاريخ البداية <span class="hint">(اختياري)</span></label>
+        <input class="form-control" type="date" name="start_date">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">تاريخ النهاية <span class="hint">(اختياري)</span></label>
+        <input class="form-control" type="date" name="end_date">
+      </div>
+
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> إنشاء الجدول</button>
+        <button class="btn btn-outline-secondary" type="button" onclick="TQM.hideScheduleForm()">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => TQM.initScheduleForm());
+</script>
+{% endblock %}

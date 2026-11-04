@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}سجل النشر — {{ app_name }}{% endblock %}
+{% block page_title %}سجل النشر{% endblock %}
+{% block page_subtitle %}كل محاولة نشر: النجاحات، الأخطاء وإعادة المحاولة{% endblock %}
+
+{% block topbar_actions %}
+<div class="d-flex gap-2">
+  <button class="btn btn-sm btn-primary" onclick="TQM.publishNow()">
+    <i class="bi bi-send-fill"></i> نشر سؤال الآن
+  </button>
+  <button class="btn btn-sm btn-outline-warning" onclick="TQM.quickAction('/api/publishing/reconcile','مراجعة العمليات غير المحسومة')">
+    <i class="bi bi-arrow-repeat"></i> مراجعة غير المحسوم
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="stat-strip">
+  <span><strong>{{ stats.total }}</strong> إجمالي العمليات</span>
+  <span class="text-success"><strong>{{ stats.success }}</strong> ناجحة</span>
+  <span class="text-danger"><strong>{{ stats.failed }}</strong> فاشلة</span>
+  <span class="text-info"><strong>{{ stats.today }}</strong> اليوم</span>
+  <span class="text-warning"><strong>{{ stats.unknown }}</strong> غير محسوم</span>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <div class="d-flex gap-2 mb-3 flex-wrap">
+      <a class="btn btn-sm {{ 'btn-primary' if not status_filter else 'btn-outline-light' }}" href="/history">الكل</a>
+      <a class="btn btn-sm {{ 'btn-primary' if status_filter == 'success' else 'btn-outline-light' }}" href="/history?status=success">ناجحة</a>
+      <a class="btn btn-sm {{ 'btn-primary' if status_filter == 'failed' else 'btn-outline-light' }}" href="/history?status=failed">فاشلة</a>
+      <a class="btn btn-sm {{ 'btn-primary' if status_filter == 'pending' else 'btn-outline-light' }}" href="/history?status=pending">قيد التنفيذ</a>
+      <a class="btn btn-sm {{ 'btn-primary' if status_filter == 'unknown' else 'btn-outline-light' }}" href="/history?status=unknown">غير محسوم</a>
+    </div>
+
+    {% if entries %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>العملية</th><th>السؤال</th><th>القناة</th><th>الوقت</th>
+            <th>الحالة</th><th>Message ID</th><th>تفاصيل</th><th class="text-end">إجراء</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in entries %}
+          <tr>
+            <td><code>{{ entry.id }}</code></td>
+            <td class="question-cell">
+              <span class="q-text">{{ entry.question_text }}</span>
+              <span class="q-correct"><code>{{ entry.question_id }}</code></span>
+            </td>
+            <td>{{ entry.channel_name }}</td>
+            <td class="small text-secondary">{{ entry.published_at }}</td>
+            <td>
+              {% set status_label = {'success':'نجاح','failed':'فشل','pending':'قيد التنفيذ','unknown':'غير محسوم'} %}
+              {% set status_class = {'success':'text-bg-success','failed':'text-bg-danger','pending':'text-bg-info','unknown':'text-bg-warning'} %}
+              <span class="badge {{ status_class.get(entry.status, 'text-bg-secondary') }}">
+                {{ status_label.get(entry.status, entry.status) }}
+              </span>
+            </td>
+            <td>{% if entry.message_id %}<code>{{ entry.message_id }}</code>{% else %}—{% endif %}</td>
+            <td class="small">
+              {% if entry.error %}<span class="text-danger">{{ entry.error }}</span>{% endif %}
+              {% if entry.attempts and entry.attempts > 1 %}
+                <span class="badge text-bg-dark">محاولات: {{ entry.attempts }}</span>
+              {% endif %}
+              {% if entry.trigger == 'manual' %}<span class="badge text-bg-secondary">يدوي</span>{% endif %}
+            </td>
+            <td class="text-end">
+              {% if entry.status in ('failed', 'unknown') %}
+              <button class="btn btn-sm btn-outline-primary" onclick="TQM.retryPublish('{{ entry.id }}')">
+                <i class="bi bi-arrow-clockwise"></i> إعادة
+              </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-journal-x"></i><br>
+      لا توجد عمليات نشر مسجلة بعد.
+    </p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

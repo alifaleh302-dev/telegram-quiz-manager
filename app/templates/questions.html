@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}بنك الأسئلة — {{ app_name }}{% endblock %}
+{% block page_title %}بنك الأسئلة{% endblock %}
+{% block page_subtitle %}إدارة كاملة للأسئلة: إضافة، تعديل، حذف، استيراد وتصدير{% endblock %}
+
+{% block topbar_actions %}
+<div class="d-flex gap-2 flex-wrap">
+  <a class="btn btn-sm btn-primary" href="/questions/new">
+    <i class="bi bi-plus-lg"></i> سؤال جديد
+  </a>
+  <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#importModal">
+    <i class="bi bi-upload"></i> استيراد JSON
+  </button>
+  <a class="btn btn-sm btn-outline-light" href="/api/questions/export">
+    <i class="bi bi-download"></i> تصدير JSON
+  </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="stat-strip">
+  <span><strong>{{ stats.total }}</strong> إجمالي</span>
+  <span class="text-success"><strong>{{ stats.published }}</strong> منشور</span>
+  <span class="text-info"><strong>{{ stats.ready }}</strong> جاهز</span>
+  <span class="text-secondary"><strong>{{ stats.draft }}</strong> مسودة</span>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <form class="filter-bar" method="get" action="/questions">
+      <div class="filter-search">
+        <i class="bi bi-search"></i>
+        <input class="form-control" name="search" placeholder="ابحث في النص أو الخيارات أو المعرف..."
+               value="{{ filters.search }}">
+      </div>
+      <select class="form-select" name="category">
+        <option value="">كل التصنيفات</option>
+        {% for category in categories %}
+        <option value="{{ category }}" {{ 'selected' if filters.category == category }}>{{ category }}</option>
+        {% endfor %}
+      </select>
+      <select class="form-select" name="status">
+        <option value="">كل الحالات</option>
+        <option value="draft" {{ 'selected' if filters.status == 'draft' }}>مسودة</option>
+        <option value="ready" {{ 'selected' if filters.status == 'ready' }}>جاهز</option>
+        <option value="published" {{ 'selected' if filters.status == 'published' }}>منشور</option>
+      </select>
+      <select class="form-select" name="difficulty">
+        <option value="">كل المستويات</option>
+        <option value="easy" {{ 'selected' if filters.difficulty == 'easy' }}>سهل</option>
+        <option value="medium" {{ 'selected' if filters.difficulty == 'medium' }}>متوسط</option>
+        <option value="hard" {{ 'selected' if filters.difficulty == 'hard' }}>صعب</option>
+      </select>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تصفية</button>
+      <a class="btn btn-outline-secondary" href="/questions">إعادة تعيين</a>
+    </form>
+
+    <div class="bulk-bar" id="bulkBar" hidden>
+      <span><strong id="bulkCount">0</strong> محدد</span>
+      <button class="btn btn-sm btn-info" onclick="TQM.bulk('set_status','ready')">تعيين كجاهز</button>
+      <button class="btn btn-sm btn-secondary" onclick="TQM.bulk('set_status','draft')">تعيين كمسودة</button>
+      <button class="btn btn-sm btn-danger" onclick="TQM.bulk('delete')">حذف المحدد</button>
+    </div>
+
+    {% if questions %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th style="width:36px"><input type="checkbox" class="form-check-input" id="checkAll"></th>
+            <th>المعرف</th>
+            <th>السؤال</th>
+            <th>التصنيف</th>
+            <th>الصعوبة</th>
+            <th>الحالة</th>
+            <th class="text-end">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for question in questions %}
+          <tr data-id="{{ question.id }}">
+            <td><input type="checkbox" class="form-check-input row-check" value="{{ question.id }}"></td>
+            <td><code>{{ question.id }}</code></td>
+            <td class="question-cell">
+              <span class="q-text">{{ question.question }}</span>
+              <span class="q-correct">
+                <i class="bi bi-check-circle-fill text-success"></i>
+                {{ question.options[question.correct_option_id] if question.options else '—' }}
+              </span>
+            </td>
+            <td><span class="badge text-bg-dark">{{ question.category }}</span></td>
+            <td>
+              {% set diff_label = {'easy':'سهل','medium':'متوسط','hard':'صعب'} %}
+              <span class="badge diff-{{ question.difficulty }}">{{ diff_label.get(question.difficulty, question.difficulty) }}</span>
+            </td>
+            <td>
+              {% set status_label = {'draft':'مسودة','ready':'جاهز','published':'منشور'} %}
+              <span class="badge status-{{ question.status }}">{{ status_label.get(question.status, question.status) }}</span>
+            </td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-light" title="معاينة"
+                        onclick='TQM.previewQuestion({{ question | tojson }})'>
+                  <i class="bi bi-eye"></i>
+                </button>
+                <a class="btn btn-outline-light" title="تعديل" href="/questions/{{ question.id }}/edit">
+                  <i class="bi bi-pencil"></i>
+                </a>
+                <button class="btn btn-outline-light" title="نسخ"
+                        onclick="TQM.duplicateQuestion('{{ question.id }}')">
+                  <i class="bi bi-copy"></i>
+                </button>
+                <button class="btn btn-outline-danger" title="حذف"
+                        onclick="TQM.deleteQuestion('{{ question.id }}')">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-inbox"></i><br>
+      لا توجد أسئلة مطابقة. أضف سؤالاً جديداً أو استورد ملف JSON.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content preview-modal">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-telegram"></i> معاينة كما ستظهر في Telegram</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="tg-poll">
+          <div class="tg-poll-title" id="pvQuestion">—</div>
+          <ul class="tg-poll-options" id="pvOptions"></ul>
+          <div class="tg-poll-explanation" id="pvExplanation"></div>
+          <div class="tg-poll-meta" id="pvMeta"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Import modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form id="importForm">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-upload"></i> استيراد أسئلة من JSON</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">ملف JSON</label>
+            <input class="form-control" type="file" name="file" accept=".json,application/json" required>
+            <div class="form-text">
+              يقبل ملفاً يحتوي قائمة أسئلة أو كائناً فيه مفتاح <code>questions</code>.
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">سياسة التكرار</label>
+            <select class="form-select" name="duplicate_policy">
+              <option value="skip">تخطي الأسئلة المكررة</option>
+              <option value="update">تحديث الأسئلة المكررة</option>
+              <option value="create">إضافة نسخة جديدة دائماً</option>
+            </select>
+          </div>
+          <div id="importResult"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-upload"></i> استيراد</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    TQM.initQuestionTable();
+    TQM.initImportForm();
+  });
+</script>
+{% endblock %}

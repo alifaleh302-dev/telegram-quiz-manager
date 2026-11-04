@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ 'تعديل سؤال' if mode == 'edit' else 'سؤال جديد' }} — {{ app_name }}{% endblock %}
+{% block page_title %}{{ 'تعديل سؤال' if mode == 'edit' else 'سؤال جديد' }}{% endblock %}
+{% block page_subtitle %}
+{% if mode == 'edit' %}المعرف: <code>{{ question.id }}</code>{% else %}أضف سؤال اختيار من متعدد بإجابة صحيحة واحدة{% endif %}
+{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-sm btn-outline-light" href="/questions"><i class="bi bi-arrow-right"></i> رجوع للقائمة</a>
+{% endblock %}
+
+{% block content %}
+<div class="editor-layout">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-pencil-square"></i> بيانات السؤال</h2></div>
+    <div class="panel-body">
+      <form id="questionForm" data-mode="{{ mode }}"
+            data-id="{{ question.id if question else '' }}">
+        <div class="mb-3">
+          <label class="form-label" for="questionText">نص السؤال <span class="req">*</span></label>
+          <textarea class="form-control" id="questionText" rows="3" maxlength="300" required
+                    placeholder="مثال: Which protocol uses port 53?">{{ question.question if question else '' }}</textarea>
+        </div>
+
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <label class="form-label mb-0">الخيارات <span class="req">*</span>
+              <span class="hint">(من 2 إلى 10، اختر الإجابة الصحيحة)</span></label>
+            <button class="btn btn-sm btn-outline-light" type="button" id="addOption">
+              <i class="bi bi-plus-lg"></i> إضافة خيار
+            </button>
+          </div>
+          <div id="optionsList"></div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="category">التصنيف</label>
+            <input class="form-control" id="category" list="categoryList" maxlength="60"
+                   value="{{ question.category if question else 'General' }}">
+            <datalist id="categoryList">
+              {% for category in categories %}<option value="{{ category }}">{% endfor %}
+            </datalist>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="difficulty">الصعوبة</label>
+            <select class="form-select" id="difficulty">
+              {% set diff = question.difficulty if question else 'medium' %}
+              <option value="easy" {{ 'selected' if diff == 'easy' }}>سهل</option>
+              <option value="medium" {{ 'selected' if diff == 'medium' }}>متوسط</option>
+              <option value="hard" {{ 'selected' if diff == 'hard' }}>صعب</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="status">الحالة</label>
+            <select class="form-select" id="status">
+              {% set st = question.status if question else 'draft' %}
+              <option value="draft" {{ 'selected' if st == 'draft' }}>مسودة</option>
+              <option value="ready" {{ 'selected' if st == 'ready' }}>جاهز للنشر</option>
+              {% if question and question.status == 'published' %}
+              <option value="published" selected>منشور</option>
+              {% endif %}
+            </select>
+          </div>
+        </div>
+
+        <div class="mb-3 mt-3">
+          <label class="form-label" for="explanation">شرح الإجابة <span class="hint">(يظهر بعد الإجابة)</span></label>
+          <textarea class="form-control" id="explanation" rows="2" maxlength="500">{{ question.explanation if question else '' }}</textarea>
+        </div>
+
+        <div id="formError" class="alert alert-danger" hidden></div>
+
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-save"></i> حفظ السؤال
+          </button>
+          <a class="btn btn-outline-secondary" href="/questions">إلغاء</a>
+          {% if mode == 'edit' %}
+          <button class="btn btn-outline-danger ms-auto" type="button" id="deleteBtn">
+            <i class="bi bi-trash"></i> حذف السؤال
+          </button>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-telegram"></i> معاينة مباشرة</h2></div>
+    <div class="panel-body">
+      <div class="tg-poll">
+        <div class="tg-poll-title" id="liveQuestion">نص السؤال...</div>
+        <ul class="tg-poll-options" id="liveOptions"></ul>
+        <div class="tg-poll-explanation" id="liveExplanation"></div>
+        <div class="tg-poll-meta">Quiz · إجابة صحيحة واحدة</div>
+      </div>
+      <p class="hint mt-3">
+        هذه معاينة تقريبية. الشكل النهائي يحدده تطبيق Telegram.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const existing = {{ question | tojson if question else 'null' }};
+  document.addEventListener('DOMContentLoaded', () => TQM.initEditor(existing));
+</script>
+{% endblock %}
