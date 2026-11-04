@@ -74,8 +74,15 @@ class PublishingService:
         channel_id: str,
         schedule_id: str | None,
         trigger: str,
+        *,
+        allow_repeat: bool = False,
     ) -> dict[str, Any]:
-        """Insert a pending row, refusing to double-claim the same target."""
+        """Insert a pending row, refusing to double-claim the same target.
+
+        ``allow_repeat`` is set only for a human-initiated manual publish, where
+        posting the same question again is an explicit, deliberate choice. Even
+        then a concurrent publish of the same question+channel is refused.
+        """
 
         def _mutate(document: dict[str, Any]) -> dict[str, Any]:
             for entry in document["history"]:
@@ -85,7 +92,11 @@ class PublishingService:
                     and entry["channel_id"] == channel_id
                 ):
                     raise ValidationError("عملية نشر لهذا السؤال على هذه القناة قيد التنفيذ.")
-                if entry["status"] == STATUS_SUCCESS and entry["question_id"] == question_id:
+                if (
+                    not allow_repeat
+                    and entry["status"] == STATUS_SUCCESS
+                    and entry["question_id"] == question_id
+                ):
                     raise ValidationError(
                         f"السؤال {question_id} نُشر مسبقاً بنجاح على القناة "
                         f"{entry['channel_id']}؛ لن يُعاد نشره."
@@ -162,6 +173,7 @@ class PublishingService:
         trigger: str = "manual",
         actor: str = "system",
         respect_pause: bool = True,
+        allow_repeat: bool = False,
     ) -> dict[str, Any]:
         """Publish a single question once. Returns the history entry."""
         if respect_pause and not self._settings.publishing_enabled:
@@ -180,7 +192,9 @@ class PublishingService:
 
         # The lock serialises attempts so two schedules cannot publish at once.
         async with self._lock:
-            entry = self._claim(question_id, channel_id, schedule_id, trigger)
+            entry = self._claim(
+                question_id, channel_id, schedule_id, trigger, allow_repeat=allow_repeat
+            )
             result: PublishResult = await self._client.send_quiz(
                 channel["chat_id"],
                 question,
@@ -204,6 +218,7 @@ class PublishingService:
                     message=(
                         f"نشر السؤال {question_id} على {channel['name']}"
                         + (" (تجريبي)" if result.dry_run else "")
+                        + (" (نشر يدوي متكرر)" if allow_repeat else "")
                     ),
                     question_id=question_id,
                     channel_id=channel_id,

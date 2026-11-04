@@ -1,0 +1,61 @@
+{# Context menu + channel-picker modal for manual publishing.
+
+   Included once per page (questions bank and publishing log) and driven by
+   TQM.initManualPublish(). A right-click on a row carrying data-question-id
+   opens the menu; the modal then asks which channel to send to. #}
+<div class="ctx-menu" id="ctxMenu" hidden>
+  <div class="ctx-menu-head" id="ctxMenuTitle">—</div>
+  <button type="button" class="ctx-item" data-action="preview">
+    <i class="bi bi-eye"></i> معاينة
+  </button>
+  <button type="button" class="ctx-item" data-action="publish">
+    <i class="bi bi-send-fill"></i> نشر الآن على قناة...
+  </button>
+  <a class="ctx-item" data-action="edit" href="#">
+    <i class="bi bi-pencil"></i> تعديل
+  </a>
+  <button type="button" class="ctx-item" data-action="copy">
+    <i class="bi bi-clipboard"></i> نسخ نص السؤال
+  </button>
+</div>
+
+<div class="modal fade" id="manualPublishModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-send-fill"></i> نشر يدوي على قناة</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <span class="mini-label">السؤال المحدد</span>
+          <p class="mb-1" id="mpQuestion">—</p>
+          <code class="text-secondary" id="mpQuestionId"></code>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="mpChannel">القناة المستهدفة</label>
+          <select class="form-select" id="mpChannel">
+            {% for channel in channels %}
+            <option value="{{ channel.id }}" {{ 'disabled' if not channel.enabled }}>
+              {{ channel.name }} ({{ channel.chat_id }}){{ ' — معطّلة' if not channel.enabled }}
+            </option>
+            {% endfor %}
+          </select>
+          {% if not channels %}
+          <div class="form-text text-warning">لا توجد قنوات بعد. أضف قناة من صفحة القنوات أولاً.</div>
+          {% endif %}
+        </div>
+        <div class="alert alert-warning small py-2 mb-0">
+          <i class="bi bi-exclamation-triangle"></i>
+          النشر اليدوي يتجاوز منع التكرار: إذا كان السؤال قد نُشر سابقاً على نفس القناة فسيُرسل مرة أخرى.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">إلغاء</button>
+        <button class="btn btn-primary" type="button" id="mpConfirm" {{ 'disabled' if not channels }}>
+          <i class="bi bi-send-fill"></i> نشر الآن
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

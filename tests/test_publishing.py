@@ -96,6 +96,33 @@ async def test_question_is_not_republished(services, ready_question, channel) ->
         await services.publishing.publish(ready_question["id"], channel["id"])
 
 
+async def test_allow_repeat_publishes_a_second_time(
+    services, ready_question, channel, fake_telegram
+) -> None:
+    first = await services.publishing.publish(ready_question["id"], channel["id"])
+    second = await services.publishing.publish(
+        ready_question["id"], channel["id"], allow_repeat=True
+    )
+    assert first["status"] == STATUS_SUCCESS
+    assert second["status"] == STATUS_SUCCESS
+    assert second["id"] != first["id"]
+    # The second delivery reached Telegram with its own message id.
+    assert len(fake_telegram.sent) == 2
+    assert fake_telegram.sent[1]["message_id"] != fake_telegram.sent[0]["message_id"]
+
+
+async def test_allow_repeat_still_blocks_a_concurrent_publish(
+    services, ready_question, channel
+) -> None:
+    services.publishing._claim(  # noqa: SLF001 - seed a pending row directly
+        ready_question["id"], channel["id"], None, "manual", allow_repeat=True
+    )
+    with pytest.raises(ValidationError, match="قيد التنفيذ"):
+        await services.publishing.publish(
+            ready_question["id"], channel["id"], allow_repeat=True
+        )
+
+
 async def test_disabled_channel_rejected(services, ready_question, channel) -> None:
     services.channels.set_enabled(channel["id"], False)
     with pytest.raises(ValidationError, match="معطّلة"):

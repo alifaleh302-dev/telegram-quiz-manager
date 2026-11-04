@@ -489,3 +489,75 @@ def test_analytics_settings_roundtrip(app_client) -> None:
     )
     assert response.status_code == 200
     assert response.json()["analytics"] == {"auto_collect": True, "auto_collect_hours": 3}
+
+
+# --- manual publish (right-click) -----------------------------------------
+
+def test_get_single_question_by_id(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    created = app_client.post(
+        "/api/questions",
+        json={
+            "question": "Which protocol uses port 53?",
+            "options": ["HTTP", "DNS"],
+            "correct_option_id": 1,
+            "status": "ready",
+        },
+        headers=headers,
+    ).json()
+
+    fetched = app_client.get(f"/api/questions/{created['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == created["id"]
+    assert fetched.json()["question"] == "Which protocol uses port 53?"
+
+    # The literal export path must still win over the {question_id} route.
+    assert app_client.get("/api/questions/export").json()["version"] == 1
+
+
+def test_get_missing_question_returns_400(app_client) -> None:
+    _login(app_client)
+    response = app_client.get("/api/questions/Q9999")
+    assert response.status_code == 400
+    assert "غير موجود" in response.json()["error"]
+
+
+def test_manual_publish_allows_repeat(app_client) -> None:
+    _login(app_client)
+    headers = {"X-CSRF-Token": _csrf(app_client)}
+    question = app_client.post(
+        "/api/questions",
+        json={
+            "question": "Which protocol uses port 53?",
+            "options": ["HTTP", "DNS"],
+            "correct_option_id": 1,
+            "status": "ready",
+        },
+        headers=headers,
+    ).json()
+    channel = app_client.post(
+        "/api/channels",
+        json={"name": "Main", "chat_id": "@main_channel", "enabled": True},
+        headers=headers,
+    ).json()
+
+    payload = {"question_id": question["id"], "channel_id": channel["id"]}
+    first = app_client.post("/api/publishing/manual", json=payload, headers=headers)
+    assert first.status_code == 200
+    assert first.json()["ok"] is True
+
+    # The same question may be sent again on purpose from the manual path.
+    second = app_client.post("/api/publishing/manual", json=payload, headers=headers)
+    assert second.status_code == 200
+    assert second.json()["ok"] is True
+    assert second.json()["entry"]["id"] != first.json()["entry"]["id"]
+
+
+def test_manual_publish_requires_csrf(app_client) -> None:
+    _login(app_client)
+    response = app_client.post(
+        "/api/publishing/manual",
+        json={"question_id": "Q0001", "channel_id": "CH001"},
+    )
+    assert response.status_code == 403

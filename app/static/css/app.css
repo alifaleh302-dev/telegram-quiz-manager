@@ -259,6 +259,30 @@ code { color: #a5b4fc; background: rgba(99, 102, 241, .1); padding: 1px 6px; bor
 .empty-state { color: var(--text-muted); text-align: center; margin: 0; }
 .empty-state i { font-size: 2rem; opacity: .45; }
 
+/* ---------- Manual publish context menu ---------- */
+.ctx-menu {
+  position: fixed; z-index: 2100; min-width: 232px;
+  background: var(--bg-panel); border: 1px solid var(--border-soft);
+  border-radius: 11px; padding: 6px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .5);
+}
+.ctx-menu[hidden] { display: none; }
+.ctx-menu-head {
+  padding: 7px 10px 8px; margin-bottom: 5px; font-size: .78rem; color: var(--text-muted);
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text-main);
+  font-size: .87rem; text-align: start; text-decoration: none; cursor: pointer;
+}
+.ctx-item:hover { background: var(--accent-soft); color: #c7d2fe; }
+.ctx-item i { width: 16px; text-align: center; color: var(--text-muted); }
+.ctx-item:hover i { color: #c7d2fe; }
+tr[data-question-id] { cursor: context-menu; }
+
 /* ---------- Toasts ---------- */
 .toast-area {
   position: fixed; inset-block-end: 22px; inset-inline-start: 22px;

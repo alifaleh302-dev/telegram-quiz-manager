@@ -460,6 +460,106 @@ const TQM = (() => {
     }
   }
 
+  // ---------- Manual publish (right-click) ----------
+  function initManualPublish() {
+    const menu = document.getElementById('ctxMenu');
+    const modalEl = document.getElementById('manualPublishModal');
+    if (!menu || !modalEl) return;
+
+    const titleEl = document.getElementById('ctxMenuTitle');
+    const channelSelect = document.getElementById('mpChannel');
+    const confirmBtn = document.getElementById('mpConfirm');
+    let target = null; // { id, text }
+
+    const closeMenu = () => { menu.hidden = true; };
+
+    function openMenu(event, row) {
+      target = {
+        id: row.dataset.questionId,
+        text: row.dataset.questionText || '',
+      };
+      titleEl.textContent = `${target.id} — ${target.text}`.slice(0, 70);
+      menu.hidden = false;
+
+      // Keep the menu inside the viewport, accounting for the RTL layout.
+      const rect = menu.getBoundingClientRect();
+      const x = Math.min(event.clientX, window.innerWidth - rect.width - 8);
+      const y = Math.min(event.clientY, window.innerHeight - rect.height - 8);
+      menu.style.insetInlineStart = `${Math.max(8, x)}px`;
+      menu.style.insetBlockStart = `${Math.max(8, y)}px`;
+    }
+
+    document.addEventListener('contextmenu', (event) => {
+      const row = event.target.closest('tr[data-question-id]');
+      if (!row) { closeMenu(); return; }
+      event.preventDefault();
+      openMenu(event, row);
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!menu.hidden && !menu.contains(event.target)) closeMenu();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeMenu();
+    });
+    window.addEventListener('scroll', closeMenu, true);
+
+    menu.querySelectorAll('.ctx-item').forEach((item) => {
+      item.addEventListener('click', async () => {
+        const action = item.dataset.action;
+        closeMenu();
+        if (!target) return;
+
+        if (action === 'edit') {
+          window.location.href = `/questions/${target.id}/edit`;
+          return;
+        }
+        if (action === 'copy') {
+          try {
+            await navigator.clipboard.writeText(target.text);
+            toast('تم نسخ نص السؤال');
+          } catch {
+            toast('تعذّر النسخ إلى الحافظة.', 'warning');
+          }
+          return;
+        }
+        if (action === 'preview') {
+          const result = await api(`/api/questions/${target.id}`);
+          if (result.ok) previewQuestion(result.data);
+          else toast(result.error, 'error');
+          return;
+        }
+        if (action === 'publish') {
+          document.getElementById('mpQuestion').textContent = target.text || '—';
+          document.getElementById('mpQuestionId').textContent = target.id;
+          new bootstrap.Modal(modalEl).show();
+        }
+      });
+    });
+
+    confirmBtn?.addEventListener('click', async () => {
+      if (!target) return;
+      const channelId = channelSelect?.value;
+      if (!channelId) { toast('اختر قناة أولاً.', 'warning'); return; }
+
+      confirmBtn.disabled = true;
+      const result = await api('/api/publishing/manual', {
+        method: 'POST',
+        body: { question_id: target.id, channel_id: channelId },
+      });
+      confirmBtn.disabled = false;
+
+      if (result.ok && result.data.ok) {
+        const channelName = channelSelect.options[channelSelect.selectedIndex]?.text || '';
+        toast(`تم نشر ${target.id} على ${channelName.split(' (')[0]}`);
+        bootstrap.Modal.getInstance(modalEl)?.hide();
+        setTimeout(() => window.location.reload(), 900);
+      } else {
+        toast(result.data?.error || result.error || 'فشل النشر', 'error');
+      }
+    });
+  }
+
   // ---------- Settings ----------
   function revealToken(button) {
     const input = document.querySelector('#tokenForm input[name="token"]');
@@ -674,6 +774,6 @@ const TQM = (() => {
     setDefaultChannel, deleteChannel,
     initScheduleForm, showScheduleForm, hideScheduleForm, scheduleAction,
     retryPublish, initSettingsForms, restoreBackup, revealToken,
-    collectAnalytics, showPollDetail,
+    collectAnalytics, showPollDetail, initManualPublish,
   };
 })();

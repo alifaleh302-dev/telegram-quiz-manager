@@ -63,6 +63,7 @@ async def questions_page(
             "questions": questions,
             "categories": services.questions.categories(),
             "stats": services.questions.stats(),
+            "channels": services.channels.list_channels(),
             "filters": {
                 "search": search,
                 "category": category,
@@ -239,3 +240,16 @@ async def export_questions(request: Request, _: Any = Depends(api_guard)) -> JSO
     document = services.questions.export_document()
     headers = {"Content-Disposition": 'attachment; filename="questions.json"'}
     return JSONResponse(document, headers=headers)
+
+
+# Registered last so the literal paths above ("export", "import-file") win over
+# this catch-all parameter route.
+@router.get("/api/questions/{question_id}")
+async def get_question(
+    request: Request, question_id: str, _: Any = Depends(api_guard)
+) -> dict[str, Any]:
+    services = get_services(request)
+    question = services.questions.get(question_id)
+    if question is None:
+        raise ValidationError(f"السؤال {question_id} غير موجود.")
+    return question

@@ -44,7 +44,8 @@
         </thead>
         <tbody>
           {% for entry in entries %}
-          <tr>
+          <tr data-question-id="{{ entry.question_id }}"
+              data-question-text="{{ entry.question_text }}">
             <td><code>{{ entry.id }}</code></td>
             <td class="question-cell">
               <span class="q-text">{{ entry.question_text }}</span>
@@ -87,4 +88,34 @@
     {% endif %}
   </div>
 </div>
+
+{% include "partials/publish_menu.html" %}
+
+<!-- Preview modal -->
+<div class="modal fade" id="previewModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content preview-modal">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-telegram"></i> معاينة كما ستظهر في Telegram</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="tg-poll">
+          <div class="tg-poll-title" id="pvQuestion">—</div>
+          <ul class="tg-poll-options" id="pvOptions"></ul>
+          <div class="tg-poll-explanation" id="pvExplanation"></div>
+          <div class="tg-poll-meta" id="pvMeta"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    TQM.initManualPublish();
+  });
+</script>
 {% endblock %}

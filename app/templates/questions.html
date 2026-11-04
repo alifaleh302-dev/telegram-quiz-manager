@@ -78,7 +78,8 @@
         </thead>
         <tbody>
           {% for question in questions %}
-          <tr data-id="{{ question.id }}">
+          <tr data-id="{{ question.id }}" data-question-id="{{ question.id }}"
+              data-question-text="{{ question.question }}">
             <td><input type="checkbox" class="form-check-input row-check" value="{{ question.id }}"></td>
             <td><code>{{ question.id }}</code></td>
             <td class="question-cell">
@@ -129,6 +130,8 @@
     {% endif %}
   </div>
 </div>
+
+{% include "partials/publish_menu.html" %}
 
 <!-- Preview modal -->
 <div class="modal fade" id="previewModal" tabindex="-1">
@@ -191,6 +194,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     TQM.initQuestionTable();
     TQM.initImportForm();
+    TQM.initManualPublish();
   });
 </script>
 {% endblock %}

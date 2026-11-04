@@ -19,6 +19,11 @@ class PublishNowIn(BaseModel):
     schedule_id: str | None = None
 
 
+class ManualPublishIn(BaseModel):
+    question_id: str
+    channel_id: str
+
+
 @router.get("/history", response_class=HTMLResponse)
 async def history_page(
     request: Request, session=Depends(require_page_session), status: str = ""
@@ -86,6 +91,28 @@ async def publish_now(
         trigger="manual",
         actor=session.username,
         respect_pause=False,
+    )
+    return {"ok": entry["status"] == "success", "entry": entry}
+
+
+@router.post("/api/publishing/manual")
+async def manual_publish(
+    request: Request, payload: ManualPublishIn, session: Any = Depends(api_guard)
+) -> dict[str, Any]:
+    """Publish a chosen question to a chosen channel right now.
+
+    This is the human-initiated path, so re-publishing a question that already
+    went out is allowed on purpose (the caller is explicitly asking for it) and
+    the pause flag is ignored, matching the existing "publish now" button.
+    """
+    services = get_services(request)
+    entry = await services.publishing.publish(
+        payload.question_id,
+        payload.channel_id,
+        trigger="manual",
+        actor=session.username,
+        respect_pause=False,
+        allow_repeat=True,
     )
     return {"ok": entry["status"] == "success", "entry": entry}
 
