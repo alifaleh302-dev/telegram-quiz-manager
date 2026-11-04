@@ -76,7 +76,7 @@ app/
 data/      # questions / channels / schedules / publishing_history / settings / users / secrets / audit_log
 logs/      # app.log
 tests/     # 118 اختباراً
-tools/     # smoke_test.sh
+tools/     # smoke_test.sh · telegram_check.py
 ```
 
 **لماذا JSON؟** لتفادي قاعدة بيانات ثقيلة على سيرفر صغير. الطبقة معزولة داخل
@@ -154,8 +154,9 @@ tools/     # smoke_test.sh
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 103 اختباراً
+python -m pytest              # 118 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
+python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
 
 تغطي الاختبارات: التخزين الذرّي والنسخ الاحتياطي، التحقق من صحة الأسئلة، الأمان وCSRF،
