@@ -62,6 +62,10 @@
           <div><dt>المنطقة الزمنية</dt><dd>{{ schedule.timezone }}</dd></div>
           <div><dt>الموعد القادم</dt><dd>{{ schedule.next_run_at or '—' }}</dd></div>
           <div><dt>نُشر بواسطته</dt><dd>{{ schedule.published_count }}</dd></div>
+          <div><dt>أسئلة مرتبطة</dt><dd>
+            {% set q = schedule.queue | default([]) | length %}
+            {% if q %}<span class="badge text-bg-info">{{ q }} في القائمة</span>{% else %}—{% endif %}
+          </dd></div>
         </dl>
         <div class="schedule-actions">
           <button class="btn btn-sm btn-outline-success" onclick="TQM.scheduleAction('{{ schedule.id }}','run-now')">
@@ -74,6 +78,11 @@
           <button class="btn btn-sm btn-outline-warning" onclick="TQM.scheduleAction('{{ schedule.id }}','skip-next')">
             <i class="bi bi-skip-forward"></i> تجاوز موعد
           </button>
+          {% if schedule.queue %}
+          <button class="btn btn-sm btn-outline-warning" onclick="TQM.scheduleAction('{{ schedule.id }}','clear-queue')">
+            <i class="bi bi-x-circle"></i> إفراغ القائمة
+          </button>
+          {% endif %}
           <button class="btn btn-sm btn-outline-danger" onclick="TQM.scheduleAction('{{ schedule.id }}','delete')">
             <i class="bi bi-trash"></i>
           </button>

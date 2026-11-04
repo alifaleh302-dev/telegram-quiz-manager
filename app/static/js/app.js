@@ -474,7 +474,13 @@ const TQM = (() => {
       else toast(result.error, 'error');
       return;
     }
-    const labels = { toggle: 'تغيير حالة الجدول', 'skip-next': 'تجاوز الموعد القادم', 'run-now': 'تنفيذ الجدول الآن' };
+    if (action === 'clear-queue' && !confirm('إفراغ قائمة الأسئلة المرتبطة بهذا الجدول؟')) return;
+    const labels = {
+      toggle: 'تغيير حالة الجدول',
+      'skip-next': 'تجاوز الموعد القادم',
+      'run-now': 'تنفيذ الجدول الآن',
+      'clear-queue': 'إفراغ قائمة الأسئلة',
+    };
     const result = await api(`/api/schedules/${id}/${action}`, { method: 'POST' });
     if (result.ok) {
       if (action === 'run-now' && !result.data.ok) {
@@ -602,15 +608,18 @@ const TQM = (() => {
     });
   }
 
-  // ---------- Bulk publish (selected questions -> one channel) ----------
+  // ---------- Bulk publish / assign (selected questions -> channel or schedule) ----------
   function initBulkPublish() {
     const modalEl = document.getElementById('bulkPublishModal');
     if (!modalEl) return;
     const confirmBtn = document.getElementById('bpConfirm');
     const channelSelect = document.getElementById('bpChannel');
+    const scheduleSelect = document.getElementById('bpSchedule');
     const progressWrap = document.getElementById('bpProgressWrap');
     const progressBar = document.getElementById('bpProgress');
     const estimateEl = document.getElementById('bpEstimate');
+    const immediateNote = document.getElementById('bpImmediateNote');
+    const assignNote = document.getElementById('bpAssignNote');
     // Server-rendered pacing interval, so the estimate matches what will happen.
     const interval = Number(modalEl.dataset.pacingInterval || 0);
     let pending = [];
@@ -628,10 +637,66 @@ const TQM = (() => {
       estimateEl.textContent = humanDuration(seconds);
     }
 
+    // A schedule template only accepts questions for its own channel, so keep
+    // the picker in step with the chosen channel and hide mismatched options.
+    function syncSchedules() {
+      if (!scheduleSelect) return;
+      const channelId = channelSelect?.value || '';
+      let firstMatch = '';
+      let visible = 0;
+      Array.from(scheduleSelect.options).forEach((option) => {
+        if (!option.value) return; // the "send now" option is always valid
+        const matches = option.dataset.channel === channelId;
+        option.hidden = !matches;
+        option.disabled = !matches;
+        if (matches) { visible += 1; if (!firstMatch) firstMatch = option.value; }
+      });
+      const current = scheduleSelect.selectedOptions[0];
+      if (current && current.value && current.dataset.channel !== channelId) {
+        scheduleSelect.value = '';
+      }
+      scheduleSelect.disabled = visible === 0;
+    }
+
+    function syncMode() {
+      const assigning = Boolean(scheduleSelect?.value);
+      if (immediateNote) immediateNote.classList.toggle('d-none', assigning);
+      if (assignNote) assignNote.classList.toggle('d-none', !assigning);
+      if (confirmBtn) {
+        confirmBtn.innerHTML = assigning
+          ? '<i class="bi bi-calendar2-check"></i> ربط بالجدول'
+          : '<i class="bi bi-send-fill"></i> نشر الآن';
+      }
+    }
+
+    channelSelect?.addEventListener('change', () => { syncSchedules(); syncMode(); });
+    scheduleSelect?.addEventListener('change', syncMode);
+
     confirmBtn?.addEventListener('click', async () => {
       if (!pending.length) return;
       const channelId = channelSelect?.value;
       if (!channelId) { toast('اختر قناة أولاً.', 'warning'); return; }
+      const scheduleId = scheduleSelect?.value || '';
+
+      // Assign mode: just pin the questions to the template, no sending now.
+      if (scheduleId) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ الربط...';
+        const assign = await api(`/api/schedules/${scheduleId}/assign`, {
+          method: 'POST',
+          body: { question_ids: pending },
+        });
+        confirmBtn.disabled = false;
+        syncMode();
+        if (assign.ok && assign.data) {
+          toast(`تم ربط ${assign.data.assigned} سؤالاً بالقالب (الإجمالي ${assign.data.queued})`);
+          bootstrap.Modal.getInstance(modalEl)?.hide();
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          toast(assign.data?.error || assign.error || 'فشل الربط', 'error');
+        }
+        return;
+      }
 
       confirmBtn.disabled = true;
       confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ النشر...';
@@ -653,7 +718,7 @@ const TQM = (() => {
       if (timer) clearInterval(timer);
       if (progressBar) progressBar.style.width = '100%';
       confirmBtn.disabled = false;
-      confirmBtn.innerHTML = '<i class="bi bi-send-fill"></i> نشر الآن';
+      syncMode();
 
       if (result.ok && result.data) {
         const { succeeded, failed, total } = result.data;
@@ -678,6 +743,7 @@ const TQM = (() => {
       if (count) count.textContent = pending.length;
       if (progressWrap) progressWrap.classList.add('d-none');
       if (progressBar) progressBar.style.width = '0%';
+      if (scheduleSelect) scheduleSelect.value = '';
       if (list) {
         list.innerHTML = pending
           .map((id) => {
@@ -687,7 +753,9 @@ const TQM = (() => {
           })
           .join('');
       }
+      syncSchedules();
       refreshEstimate();
+      syncMode();
       new bootstrap.Modal(modalEl).show();
     };
   }

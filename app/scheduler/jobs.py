@@ -130,10 +130,24 @@ class ScheduleRunner:
         target = max(1, min(batch_size, remaining)) if per_day else batch_size
 
         channel = schedule["channel_id"]
-        candidates = self._questions.pick_candidates(
-            selection=schedule.get("question_selection", "sequential"),
-            category_filter=schedule.get("category_filter", ""),
-        )
+        # Questions pinned to this schedule (assigned from the bank) go first, in
+        # the exact order they were queued; any remaining slots are filled from
+        # the normal auto-selection so a queue never blocks a schedule.
+        queued_ids = self._schedules.queue_of(schedule)
+        candidates = []
+        if queued_ids:
+            by_id = {q["id"]: q for q in self._questions.pick_candidates()}
+            candidates = [by_id[qid] for qid in queued_ids if qid in by_id]
+        if len(candidates) < target:
+            chosen = {q["id"] for q in candidates}
+            for question in self._questions.pick_candidates(
+                selection=schedule.get("question_selection", "sequential"),
+                category_filter=schedule.get("category_filter", ""),
+                exclude_ids=chosen,
+            ):
+                candidates.append(question)
+                if len(candidates) >= target:
+                    break
         if not candidates:
             self._audit.record(
                 "publishing.no_questions",
@@ -147,6 +161,7 @@ class ScheduleRunner:
         failures = 0
         last_question_id = ""
         waited = 0.0
+        published_ids: list[str] = []
         for index, question in enumerate(candidates[:target]):
             if index and gap and waited < MAX_BATCH_WAIT_SECONDS:
                 delay = min(gap, MAX_BATCH_WAIT_SECONDS - waited)
@@ -168,6 +183,7 @@ class ScheduleRunner:
 
             if entry["status"] == "success":
                 published += 1
+                published_ids.append(question["id"])
             else:
                 failures += 1
 
@@ -181,6 +197,18 @@ class ScheduleRunner:
                         f"(المحاولة {entry['attempts']})."
                     ),
                 )
+
+        # Drop what we just published from the queue, plus anything queued that
+        # is no longer publishable (deleted, or already published elsewhere) so
+        # the queue cannot get stuck on a dead entry.
+        if queued_ids:
+            stale = [
+                qid
+                for qid in queued_ids
+                if (question := self._questions.get(qid)) is None
+                or question.get("status") != "ready"
+            ]
+            self._schedules.consume_queue(schedule_id, published_ids + stale)
 
         self._schedules.record_run(
             schedule_id, advance=published > 0, advance_by=published

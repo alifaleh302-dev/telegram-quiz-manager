@@ -48,6 +48,7 @@ class ScheduleService:
                 **data,
                 "cursor": 0,
                 "published_count": 0,
+                "queue": [],
                 "last_run_at": None,
                 "next_run_at": None,
                 "created_at": now,
@@ -134,6 +135,93 @@ class ScheduleService:
         )
 
     # --- runtime state -----------------------------------------------------
+    def queue_of(self, schedule: dict[str, Any]) -> list[str]:
+        """The ordered list of question IDs pinned to this schedule."""
+        return [str(qid) for qid in (schedule.get("queue") or [])]
+
+    def assign_questions(
+        self, schedule_id: str, question_ids: list[str], *, actor: str = "system"
+    ) -> dict[str, Any]:
+        """Append ``question_ids`` to a schedule's queue, preserving order.
+
+        A question already queued is not added twice, so re-running an
+        assignment is idempotent instead of publishing the same item twice.
+        """
+        ordered = list(dict.fromkeys(str(qid) for qid in question_ids if qid))
+        if not ordered:
+            raise ValidationError("لم يتم تحديد أي سؤال.")
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for schedule in document["schedules"]:
+                if schedule["id"] == schedule_id:
+                    queue = self.queue_of(schedule)
+                    queue.extend(qid for qid in ordered if qid not in queue)
+                    schedule["queue"] = queue
+                    schedule["updated_at"] = utc_now_iso()
+                    return schedule
+            raise KeyError(schedule_id)
+
+        try:
+            schedule = self._storage.schedules.update(_mutate)
+        except KeyError as exc:
+            raise ValidationError(f"الجدول {schedule_id} غير موجود.") from exc
+
+        self._audit.record(
+            "schedule.assigned",
+            actor=actor,
+            message=(
+                f"ربط {len(ordered)} سؤالاً بالجدول {schedule_id} "
+                f"(إجمالي القائمة {len(self.queue_of(schedule))})."
+            ),
+            schedule_id=schedule_id,
+            count=len(ordered),
+        )
+        return schedule
+
+    def consume_queue(
+        self, schedule_id: str, question_ids: list[str]
+    ) -> dict[str, Any]:
+        """Remove published questions from a schedule's queue (FIFO order kept)."""
+        published = {str(qid) for qid in question_ids}
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for schedule in document["schedules"]:
+                if schedule["id"] == schedule_id:
+                    schedule["queue"] = [
+                        qid for qid in self.queue_of(schedule) if qid not in published
+                    ]
+                    schedule["updated_at"] = utc_now_iso()
+                    return schedule
+            raise KeyError(schedule_id)
+
+        try:
+            return self._storage.schedules.update(_mutate)
+        except KeyError as exc:
+            raise ValidationError(f"الجدول {schedule_id} غير موجود.") from exc
+
+    def clear_queue(self, schedule_id: str, *, actor: str = "system") -> dict[str, Any]:
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for schedule in document["schedules"]:
+                if schedule["id"] == schedule_id:
+                    schedule["queue"] = []
+                    schedule["updated_at"] = utc_now_iso()
+                    return schedule
+            raise KeyError(schedule_id)
+
+        try:
+            schedule = self._storage.schedules.update(_mutate)
+        except KeyError as exc:
+            raise ValidationError(f"الجدول {schedule_id} غير موجود.") from exc
+
+        self._audit.record(
+            "schedule.queue_cleared",
+            actor=actor,
+            level="warning",
+            message=f"إفراغ قائمة الأسئلة المرتبطة بالجدول {schedule_id}.",
+            schedule_id=schedule_id,
+        )
+        return schedule
+
     def record_run(
         self,
         schedule_id: str,

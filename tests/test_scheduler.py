@@ -395,3 +395,90 @@ async def test_engine_reload_skips_a_broken_schedule(services, monkeypatch) -> N
         assert engine._scheduler.get_job(f"schedule:{good['id']}") is not None  # noqa: SLF001
     finally:
         engine.shutdown()
+
+
+# --- assigned question queue ------------------------------------------------
+
+async def test_runner_publishes_queued_questions_in_order(services, fake_telegram) -> None:
+    created = _make_ready(services, 5)
+    schedule = _schedule(services, questions_per_run=2)
+    # Queue the last two, in an order the auto-selection would never produce.
+    services.schedules.assign_questions(
+        schedule["id"], [created[4]["id"], created[2]["id"]]
+    )
+
+    result = await services.runner.run(schedule["id"])
+
+    assert result["ok"] is True
+    assert [s["question"]["question"] for s in fake_telegram.sent] == [
+        "question 4", "question 2",
+    ]
+
+
+async def test_runner_consumes_published_queue_entries(services) -> None:
+    created = _make_ready(services, 3)
+    schedule = _schedule(services)
+    services.schedules.assign_questions(schedule["id"], [created[0]["id"], created[1]["id"]])
+
+    await services.runner.run(schedule["id"])
+
+    remaining = services.schedules.get(schedule["id"])["queue"]
+    assert remaining == [created[1]["id"]]  # only the one not yet published
+
+
+async def test_runner_falls_back_to_auto_selection_when_queue_empty(services, fake_telegram) -> None:
+    _make_ready(services, 3)
+    schedule = _schedule(services)
+    result = await services.runner.run(schedule["id"])
+    assert result["ok"] is True
+    assert fake_telegram.sent[0]["question"]["question"] == "question 0"
+
+
+async def test_runner_queue_first_then_fills_from_selection(services, fake_telegram) -> None:
+    created = _make_ready(services, 4)
+    schedule = _schedule(services, questions_per_run=2)
+    services.schedules.assign_questions(schedule["id"], [created[3]["id"]])
+
+    await services.runner.run(schedule["id"])
+
+    # The queued item goes first, the free slot is filled by auto-selection.
+    assert [s["question"]["question"] for s in fake_telegram.sent] == [
+        "question 3", "question 0",
+    ]
+
+
+async def test_runner_prunes_unpublishable_queue_entries(services, fake_telegram) -> None:
+    created = _make_ready(services, 2)
+    schedule = _schedule(services)
+    services.schedules.assign_questions(
+        schedule["id"], [created[0]["id"], created[1]["id"]]
+    )
+    # A queued question that is no longer "ready" must not wedge the queue.
+    services.questions.update(
+        created[1]["id"],
+        {
+            "question": "question 1",
+            "options": ["a", "b"],
+            "correct_option_id": 0,
+            "status": "draft",
+        },
+    )
+
+    await services.runner.run(schedule["id"])
+
+    assert services.schedules.get(schedule["id"])["queue"] == []
+
+
+def test_assign_questions_is_idempotent(services) -> None:
+    created = _make_ready(services, 2)
+    schedule = _schedule(services)
+    services.schedules.assign_questions(schedule["id"], [created[0]["id"]])
+    services.schedules.assign_questions(schedule["id"], [created[0]["id"], created[1]["id"]])
+    assert services.schedules.get(schedule["id"])["queue"] == [
+        created[0]["id"], created[1]["id"],
+    ]
+
+
+def test_new_schedule_starts_with_an_empty_queue(services) -> None:
+    schedule = _schedule(services)
+    assert schedule["queue"] == []

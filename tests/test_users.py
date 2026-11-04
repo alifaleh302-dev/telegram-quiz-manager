@@ -391,6 +391,27 @@ def test_bulk_publish_controls_shown_when_both_grants_held(app_client) -> None:
     assert page.status_code == 200
     assert "bulkPublishModal" in page.text
     assert "نشر المحدد" in page.text
+    # Without the schedules grant the template picker is not offered.
+    assert 'for="bpSchedule"' not in page.text
+    assert 'id="bpSchedule"' not in page.text
+
+
+def test_bulk_modal_offers_schedule_templates_to_schedulers(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    _make_schedule(app_client, headers, channel["id"], name="Slot")
+    _new_user(
+        app_client, headers, "planner", permissions=["questions", "publish", "schedules"]
+    )
+
+    app_client.cookies.clear()
+    _login(app_client, "planner", "UserPassword123!")
+    page = app_client.get("/questions")
+    assert page.status_code == 200
+    assert "قالب الجدولة" in page.text
+    # The template option is tagged with its channel so the UI can filter it.
+    assert f'data-channel="{channel["id"]}"' in page.text
 
 
 def test_settings_page_hides_system_panels_from_regular_users(app_client) -> None:
@@ -655,3 +676,127 @@ def test_bulk_publish_requires_publish_grant(app_client) -> None:
         headers=_headers(app_client),
     )
     assert response.status_code == 403
+
+
+# --- assigning selected questions to a schedule template --------------------
+
+def _make_schedule(client: TestClient, headers: dict[str, str], channel_id: str, name: str = "Slot") -> dict:
+    response = client.post(
+        "/api/schedules",
+        json={"channel_id": channel_id, "type": "daily", "times": ["20:00"], "name": name},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_assign_questions_pins_them_to_a_schedule(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    first = _make_question(app_client, headers, "first")
+    second = _make_question(app_client, headers, "second")
+    schedule = _make_schedule(app_client, headers, channel["id"])
+
+    response = app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": [first["id"], second["id"]]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"ok": True, "schedule_id": schedule["id"], "assigned": 2, "queued": 2}
+
+    stored = app_client.get("/api/schedules").json()["schedules"][0]
+    assert stored["queue"] == [first["id"], second["id"]]
+
+
+def test_assign_is_idempotent_and_preserves_order(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    first = _make_question(app_client, headers, "first")
+    second = _make_question(app_client, headers, "second")
+    schedule = _make_schedule(app_client, headers, channel["id"])
+
+    app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": [second["id"], first["id"]]},
+        headers=headers,
+    )
+    # Re-assigning an already-queued question must not duplicate it.
+    again = app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": [second["id"]]},
+        headers=headers,
+    )
+    assert again.json()["queued"] == 2
+    stored = app_client.get("/api/schedules").json()["schedules"][0]
+    assert stored["queue"] == [second["id"], first["id"]]
+
+
+def test_assign_rejects_unknown_schedule_and_questions(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    question = _make_question(app_client, headers)
+    schedule = _make_schedule(app_client, headers, channel["id"])
+
+    missing_schedule = app_client.post(
+        "/api/schedules/SCH404/assign",
+        json={"question_ids": [question["id"]]},
+        headers=headers,
+    )
+    assert missing_schedule.status_code == 400
+
+    missing_question = app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": ["Q9999"]},
+        headers=headers,
+    )
+    assert missing_question.status_code == 400
+
+    empty = app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": []},
+        headers=headers,
+    )
+    assert empty.status_code == 400
+
+
+def test_assign_requires_schedules_grant(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    question = _make_question(app_client, headers)
+    schedule = _make_schedule(app_client, headers, channel["id"])
+    _new_user(app_client, headers, "editor", permissions=["questions"])
+
+    app_client.cookies.clear()
+    _login(app_client, "editor", "UserPassword123!")
+    response = app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": [question["id"]]},
+        headers=_headers(app_client),
+    )
+    assert response.status_code == 403
+
+
+def test_clear_queue_empties_the_schedule(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers)
+    question = _make_question(app_client, headers)
+    schedule = _make_schedule(app_client, headers, channel["id"])
+    app_client.post(
+        f"/api/schedules/{schedule['id']}/assign",
+        json={"question_ids": [question["id"]]},
+        headers=headers,
+    )
+
+    cleared = app_client.post(
+        f"/api/schedules/{schedule['id']}/clear-queue", headers=headers
+    )
+    assert cleared.status_code == 200
+    stored = app_client.get("/api/schedules").json()["schedules"][0]
+    assert stored["queue"] == []

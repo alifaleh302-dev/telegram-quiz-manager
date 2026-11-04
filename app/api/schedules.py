@@ -14,6 +14,7 @@ from app.api.deps import (
     require_page_permission,
     require_permission,
 )
+from app.storage.validators import ValidationError
 
 router = APIRouter(tags=["schedules"])
 
@@ -34,6 +35,10 @@ class ScheduleIn(BaseModel):
     start_date: str = ""
     end_date: str = ""
     name: str = ""
+
+
+class AssignIn(BaseModel):
+    question_ids: list[str] = Field(default_factory=list)
 
 
 @router.get("/schedules", response_class=HTMLResponse)
@@ -91,6 +96,48 @@ async def update_schedule(
     )
     services.engine.reload()
     return schedule
+
+
+@router.post("/api/schedules/{schedule_id}/assign")
+async def assign_questions(
+    request: Request,
+    schedule_id: str,
+    payload: AssignIn,
+    session: Any = Depends(require_permission('schedules')),
+) -> dict[str, Any]:
+    """Pin selected questions to a schedule so it publishes them in order."""
+    services = get_services(request)
+    schedule = services.schedules.get(schedule_id)
+    if schedule is None:
+        raise ValidationError(f"الجدول {schedule_id} غير موجود.")
+
+    ids = list(dict.fromkeys(qid for qid in payload.question_ids if qid))
+    if not ids:
+        raise ValidationError("لم يتم تحديد أي سؤال.")
+    missing = [qid for qid in ids if services.questions.get(qid) is None]
+    if missing:
+        raise ValidationError(f"أسئلة غير موجودة: {', '.join(missing)}.")
+
+    updated = services.schedules.assign_questions(
+        schedule_id, ids, actor=session.username
+    )
+    return {
+        "ok": True,
+        "schedule_id": schedule_id,
+        "assigned": len(ids),
+        "queued": len(services.schedules.queue_of(updated)),
+    }
+
+
+@router.post("/api/schedules/{schedule_id}/clear-queue")
+async def clear_queue(
+    request: Request, schedule_id: str, session: Any = Depends(require_permission('schedules'))
+) -> dict[str, Any]:
+    services = get_services(request)
+    if services.schedules.get(schedule_id) is None:
+        raise ValidationError(f"الجدول {schedule_id} غير موجود.")
+    services.schedules.clear_queue(schedule_id, actor=session.username)
+    return {"ok": True}
 
 
 @router.post("/api/schedules/{schedule_id}/toggle")

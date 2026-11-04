@@ -176,16 +176,40 @@
             <div class="form-text text-warning">لا توجد قنوات بعد. أضف قناة من صفحة القنوات أولاً.</div>
             {% endif %}
           </div>
-          <div class="alert alert-warning small py-2 mb-3">
-            <i class="bi bi-exclamation-triangle"></i>
-            تُرسل الأسئلة المحددة بالتتابع إلى القناة المختارة. النشر اليدوي يتجاوز منع التكرار.
+          {% if 'schedules' in permissions %}
+          <div class="mb-3">
+            <label class="form-label" for="bpSchedule">قالب الجدولة <span class="hint">(اختياري)</span></label>
+            <select class="form-select" id="bpSchedule">
+              <option value="">— إرسال فوري الآن —</option>
+              {% for template in schedule_templates %}
+              <option value="{{ template.id }}" data-channel="{{ template.channel_id }}">
+                {{ template.name }} · {{ template.channel_name }}
+                {%- if template.queued %} (مرتبط: {{ template.queued }}){% endif %}
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text" id="bpScheduleHint">
+              اختر قالب جدولة (من صفحة الجدولة) لربط الأسئلة المحددة به،
+              فتُنشر تلقائياً بالترتيب حسب مواعيده. القوالب معروضة للقناة المختارة فقط.
+            </div>
+            {% if not schedule_templates %}
+            <div class="form-text text-warning">
+              لا توجد قوالب جدولة بعد. أنشئ قالباً من صفحة الجدولة لربط الأسئلة به.
+            </div>
+            {% endif %}
           </div>
-          <div class="alert alert-info small py-2 mb-3">
+          {% endif %}
+          <div class="alert alert-info small py-2 mb-3" id="bpImmediateNote">
             <i class="bi bi-hourglass-split"></i>
             التباعد بين الأسئلة: <strong>{{ pacing_interval }}</strong> ثانية.
             تيليجرام يحدّ سرعة الإرسال لكل قناة، لذلك النشر الجماعي يأخذ وقتاً؛
             لا تغلق الصفحة أثناء النشر.
             <div class="mt-1">الوقت المتوقع للدفعة: <strong id="bpEstimate">—</strong></div>
+          </div>
+          <div class="alert alert-warning small py-2 mb-3 d-none" id="bpAssignNote">
+            <i class="bi bi-calendar2-week"></i>
+            سيتم <strong>ربط</strong> الأسئلة المحددة بقالب الجدولة المختار فقط؛
+            لن يُنشر أي سؤال الآن. يُرسلها القالب حسب مواعيده وبالترتيب المحدد.
           </div>
           <div class="progress d-none" id="bpProgressWrap" style="height: 8px;">
             <div class="progress-bar progress-bar-striped progress-bar-animated"

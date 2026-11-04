@@ -62,6 +62,18 @@ async def questions_page(
         search=search, category=category, status=status, difficulty=difficulty
     )
     pacing_interval, _ = services.publishing.pacing()
+    channels = services.channels.list_channels()
+    channel_names = {c["id"]: c["name"] for c in channels}
+    schedule_templates = [
+        {
+            "id": s["id"],
+            "name": s.get("name") or s["id"],
+            "channel_id": s["channel_id"],
+            "channel_name": channel_names.get(s["channel_id"], s["channel_id"]),
+            "queued": len(services.schedules.queue_of(s)),
+        }
+        for s in services.schedules.list_schedules()
+    ]
     return render(
         request,
         "questions.html",
@@ -69,7 +81,8 @@ async def questions_page(
             "questions": questions,
             "categories": services.questions.categories(),
             "stats": services.questions.stats(),
-            "channels": services.channels.list_channels(),
+            "channels": channels,
+            "schedule_templates": schedule_templates,
             "pacing_interval": pacing_interval,
             "filters": {
                 "search": search,
