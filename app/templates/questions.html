@@ -53,6 +53,19 @@
         <option value="medium" {{ 'selected' if filters.difficulty == 'medium' }}>متوسط</option>
         <option value="hard" {{ 'selected' if filters.difficulty == 'hard' }}>صعب</option>
       </select>
+      {% if channels %}
+      <select class="form-select" name="channel_id" title="تصفية متقدمة حسب قناة معيّنة">
+        <option value="">كل القنوات</option>
+        {% for channel in channels %}
+        <option value="{{ channel.id }}" {{ 'selected' if filters.channel_id == channel.id }}>{{ channel.name }}</option>
+        {% endfor %}
+      </select>
+      <select class="form-select" name="channel_state" title="حالة النشر على القناة المختارة">
+        <option value="">حالة القناة (أي)</option>
+        <option value="published" {{ 'selected' if filters.channel_state == 'published' }}>منشور على القناة</option>
+        <option value="not_published" {{ 'selected' if filters.channel_state == 'not_published' }}>غير منشور على القناة</option>
+      </select>
+      {% endif %}
       <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تصفية</button>
       <a class="btn btn-outline-secondary" href="/questions">إعادة تعيين</a>
     </form>

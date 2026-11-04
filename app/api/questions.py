@@ -54,6 +54,8 @@ async def questions_page(
     category: str = "",
     status: str = "",
     difficulty: str = "",
+    channel_id: str = "",
+    channel_state: str = "",
 ) -> Response:
     if isinstance(session, RedirectResponse):
         return session
@@ -73,6 +75,17 @@ async def questions_page(
     )
     if status == "published":
         questions = [q for q in questions if q["id"] in published_ids]
+
+    # Advanced status filter: narrow to a chosen channel, either the questions
+    # already sent there or the ones never sent there.
+    channel_id = channel_id if channel_id in channel_names else ""
+    if channel_state not in ("published", "not_published"):
+        channel_state = ""
+    if not channel_id:
+        channel_state = ""
+    questions = services.questions.filter_by_channel_publish(
+        questions, published_pairs, channel_id, channel_state
+    )
 
     pacing_interval, _ = services.publishing.pacing()
     for question in questions:
@@ -99,6 +112,8 @@ async def questions_page(
                 "category": category,
                 "status": status,
                 "difficulty": difficulty,
+                "channel_id": channel_id,
+                "channel_state": channel_state,
             },
         },
         session=session,

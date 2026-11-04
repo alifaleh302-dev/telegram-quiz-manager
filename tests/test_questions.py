@@ -195,3 +195,67 @@ def test_export_document_shape(services) -> None:
     document = services.questions.export_document()
     assert document["version"] == 1
     assert len(document["questions"]) == 1
+
+
+# --- advanced status filter: per-channel published / not published ---------
+
+
+def _channel_pairs(*pairs):
+    return {(channel_id, question_id) for channel_id, question_id in pairs}
+
+
+def test_channel_publish_filter_keeps_only_published_on_channel(services) -> None:
+    first = services.questions.create(_payload("first"))
+    second = services.questions.create(_payload("second"))
+    third = services.questions.create(_payload("third"))
+    pairs = _channel_pairs(("CH001", first["id"]), ("CH001", third["id"]))
+
+    kept = services.questions.filter_by_channel_publish(
+        [first, second, third], pairs, "CH001", "published"
+    )
+
+    assert [q["id"] for q in kept] == [first["id"], third["id"]]
+
+
+def test_channel_publish_filter_keeps_only_not_published_on_channel(services) -> None:
+    first = services.questions.create(_payload("first"))
+    second = services.questions.create(_payload("second"))
+    pairs = _channel_pairs(("CH001", first["id"]))
+
+    kept = services.questions.filter_by_channel_publish(
+        [first, second], pairs, "CH001", "not_published"
+    )
+
+    assert [q["id"] for q in kept] == [second["id"]]
+
+
+def test_channel_publish_filter_is_per_channel(services) -> None:
+    question = services.questions.create(_payload("only on first"))
+    pairs = _channel_pairs(("CH001", question["id"]))
+
+    # Published on CH001 but not on CH002.
+    assert services.questions.filter_by_channel_publish(
+        [question], pairs, "CH001", "published"
+    ) == [question]
+    assert services.questions.filter_by_channel_publish(
+        [question], pairs, "CH002", "published"
+    ) == []
+    assert services.questions.filter_by_channel_publish(
+        [question], pairs, "CH002", "not_published"
+    ) == [question]
+
+
+def test_channel_publish_filter_is_opt_in(services) -> None:
+    question = services.questions.create(_payload("q"))
+    pairs = _channel_pairs(("CH001", question["id"]))
+
+    # No channel or an unknown state leaves the list untouched.
+    assert services.questions.filter_by_channel_publish(
+        [question], pairs, "", "published"
+    ) == [question]
+    assert services.questions.filter_by_channel_publish(
+        [question], pairs, "CH001", ""
+    ) == [question]
+    assert services.questions.filter_by_channel_publish(
+        [question], pairs, "CH001", "bogus"
+    ) == [question]

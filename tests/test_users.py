@@ -957,3 +957,92 @@ def test_publish_modal_offers_a_stop_button(app_client) -> None:
     assert page.status_code == 200
     assert 'id="bpCancelRun"' in page.text
     assert "إيقاف النشر" in page.text
+
+
+# --- advanced status filter: per-channel published / not published ---------
+
+def _publish_question(app_client, headers, question_id, channel_id):
+    response = app_client.post(
+        "/api/publishing/manual",
+        json={"question_id": question_id, "channel_id": channel_id},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+
+
+def _row_ids(page_text: str) -> set[str]:
+    import re
+
+    return set(re.findall(r'data-question-id="([^"]+)"', page_text))
+
+
+def test_channel_filter_shows_only_questions_published_on_that_channel(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel_a = _make_channel(app_client, headers, "Alpha")
+    channel_b = _make_channel(app_client, headers, "Beta")
+    sent = _make_question(app_client, headers, "sent on A")["id"]
+    _make_question(app_client, headers, "never sent")
+    _publish_question(app_client, headers, sent, channel_a["id"])
+
+    page = app_client.get(f"/questions?channel_id={channel_a['id']}&channel_state=published")
+    assert page.status_code == 200
+    assert _row_ids(page.text) == {sent}
+
+    # The same question is NOT published on channel B.
+    page_b = app_client.get(
+        f"/questions?channel_id={channel_b['id']}&channel_state=published"
+    )
+    assert _row_ids(page_b.text) == set()
+
+
+def test_channel_filter_not_published_returns_the_complement(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers, "Alpha")
+    sent = _make_question(app_client, headers, "sent")["id"]
+    never = _make_question(app_client, headers, "never")["id"]
+    _publish_question(app_client, headers, sent, channel["id"])
+
+    page = app_client.get(
+        f"/questions?channel_id={channel['id']}&channel_state=not_published"
+    )
+    assert page.status_code == 200
+    assert _row_ids(page.text) == {never}
+
+
+def test_channel_filter_state_ignored_without_a_channel(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    channel = _make_channel(app_client, headers, "Alpha")
+    sent = _make_question(app_client, headers, "sent")["id"]
+    never = _make_question(app_client, headers, "never")["id"]
+    _publish_question(app_client, headers, sent, channel["id"])
+
+    # A state without a channel is meaningless and must not hide anything.
+    page = app_client.get("/questions?channel_state=published")
+    assert _row_ids(page.text) == {sent, never}
+
+
+def test_channel_filter_rejects_unknown_channel(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _make_question(app_client, headers, "one")
+
+    page = app_client.get("/questions?channel_id=CH999&channel_state=published")
+    assert page.status_code == 200
+    # Unknown channel is dropped, so nothing is filtered out.
+    assert "CH999" not in page.text
+
+
+def test_filter_bar_renders_channel_controls(app_client) -> None:
+    _login(app_client)
+    headers = _headers(app_client)
+    _make_channel(app_client, headers, "Alpha")
+
+    page = app_client.get("/questions")
+    assert 'name="channel_id"' in page.text
+    assert 'name="channel_state"' in page.text
+    assert "غير منشور على القناة" in page.text
+    assert "منشور على القناة" in page.text

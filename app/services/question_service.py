@@ -204,6 +204,29 @@ class QuestionService:
     def categories(self) -> list[str]:
         return sorted({q["category"] for q in self._all() if q.get("category")})
 
+    @staticmethod
+    def filter_by_channel_publish(
+        questions: list[dict[str, Any]],
+        published_pairs: set[tuple[str, str]],
+        channel_id: str,
+        state: str,
+    ) -> list[dict[str, Any]]:
+        """Keep questions by whether they went out on ``channel_id``.
+
+        ``state`` is ``published`` (only those already sent to the channel) or
+        ``not_published`` (only those never sent there). Any other value, or a
+        missing channel, returns the list untouched — this is an opt-in filter.
+        """
+        if not channel_id or state not in ("published", "not_published"):
+            return questions
+
+        def is_published(question: dict[str, Any]) -> bool:
+            return (channel_id, question["id"]) in published_pairs
+
+        if state == "published":
+            return [q for q in questions if is_published(q)]
+        return [q for q in questions if not is_published(q)]
+
     def stats(self) -> dict[str, int]:
         questions = self._all()
         return {
