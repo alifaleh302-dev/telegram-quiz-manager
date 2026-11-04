@@ -1,0 +1,4 @@
+# Railway/Nixpacks build config, kept in the repo so the deploy does not depend
+# on the start command living only in the service settings.
+[start]
+cmd = "python run.py"
