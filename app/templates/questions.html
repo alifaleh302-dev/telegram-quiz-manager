@@ -115,7 +115,7 @@
                 {{ question.options[question.correct_option_id] if question.options else '—' }}
               </span>
             </td>
-            <td><span class="badge text-bg-dark">{{ question.category }}</span></td>
+            <td><span class="badge text-bg-secondary">{{ question.category }}</span></td>
             <td>
               {% set diff_label = {'easy':'سهل','medium':'متوسط','hard':'صعب'} %}
               <span class="badge diff-{{ question.difficulty }}">{{ diff_label.get(question.difficulty, question.difficulty) }}</span>

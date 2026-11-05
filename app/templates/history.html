@@ -68,7 +68,7 @@
             <td class="small">
               {% if entry.error %}<span class="text-danger">{{ entry.error }}</span>{% endif %}
               {% if entry.attempts and entry.attempts > 1 %}
-                <span class="badge text-bg-dark">محاولات: {{ entry.attempts }}</span>
+                <span class="badge text-bg-secondary">محاولات: {{ entry.attempts }}</span>
               {% endif %}
               {% if entry.trigger == 'manual' %}<span class="badge text-bg-secondary">يدوي</span>{% endif %}
             </td>
