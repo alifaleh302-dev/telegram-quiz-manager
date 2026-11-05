@@ -46,7 +46,7 @@ class StudentService:
 
     def list_students(self, search: str = "") -> list[dict[str, Any]]:
         students = self._all()
-        text = (search or "").strip().lower()
+        text = (search or "").strip().lower().lstrip("@")
         if text:
             students = [
                 s
@@ -54,6 +54,7 @@ class StudentService:
                 if text in str(s.get("first_name", "")).lower()
                 or text in str(s.get("last_name", "")).lower()
                 or text in str(s.get("username", "")).lower()
+                or text in self.display_name(s).lower()
                 or text in str(s.get("telegram_user_id", ""))
             ]
         return sorted(

@@ -130,7 +130,7 @@ body.student-app {
 
 .sa-tabs {
   position: fixed; bottom: 0; right: 0; left: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   background: var(--tg-secondary-bg);
   border-top: 1px solid rgba(148, 163, 184, 0.15);
   padding-bottom: env(safe-area-inset-bottom);
@@ -169,7 +169,26 @@ body.student-app {
 .sa-option.correct { border-color: #22c55e; background: rgba(34, 197, 94, 0.12); }
 .sa-option.wrong { border-color: #ef4444; background: rgba(239, 68, 68, 0.12); }
 
-.sa-nav-row { display: flex; gap: 10px; margin-top: 4px; }
+.sa-nav-hint {
+  display: flex; align-items: center; gap: 8px;
+  margin: 2px 2px 0; font-size: 0.78rem; color: var(--tg-hint);
+  text-align: center; justify-content: center;
+}
+.sa-nav-hint i { color: var(--tg-link); }
+
+/* Submit sits in a sticky bar just above the tab bar, away from the answer
+   options so a tap meant for an option cannot land on it by accident. */
+.sa-submit-bar {
+  position: sticky; bottom: calc(58px + env(safe-area-inset-bottom));
+  z-index: 20; margin-top: 14px;
+  padding: 10px;
+  background: linear-gradient(to top, var(--tg-bg) 65%, transparent);
+}
+.sa-submit {
+  background: linear-gradient(135deg, #f97316, #dc2626);
+  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.35);
+}
+.sa-submit:active { transform: translateY(1px); }
 
 /* Edge navigation: tapping the middle of either side of the screen reveals a
    chevron; tapping the chevron then moves to the previous/next question. The

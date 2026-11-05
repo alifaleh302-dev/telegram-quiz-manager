@@ -89,20 +89,48 @@ class ExamAttemptService:
     def attempts_for_exam(self, exam_id: str) -> list[dict[str, Any]]:
         return [a for a in self._all() if a["exam_id"] == exam_id]
 
-    def all_attempts(self, *, status: str = "", search: str = "") -> list[dict[str, Any]]:
+    def all_attempts(
+        self,
+        *,
+        status: str = "",
+        search: str = "",
+        student_ids: set[str] | None = None,
+        exam_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
         rows = self._all()
         if status:
             rows = [a for a in rows if a.get("status") == status]
-        text = (search or "").strip().lower()
+        text = (search or "").strip().lower().lstrip("@")
         if text:
+            ids = student_ids or set()
+            exams = exam_ids or set()
             rows = [
                 a
                 for a in rows
                 if text in str(a.get("exam_id", "")).lower()
                 or text in str(a.get("student_id", "")).lower()
                 or text in str(a.get("id", "")).lower()
+                or a.get("student_id") in ids
+                or a.get("exam_id") in exams
             ]
         return sorted(rows, key=lambda a: a.get("started_at") or "", reverse=True)
+
+    def best_per_student(self, attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep only the highest-scoring attempt for each (exam, student) pair.
+
+        A student may sit the same exam several times; the score that counts is
+        their best one, so every aggregate (average, highest, lowest, buckets)
+        must be built on these rows rather than on every attempt.
+        """
+        best: dict[tuple[str, str], dict[str, Any]] = {}
+        for attempt in attempts:
+            key = (attempt.get("exam_id", ""), attempt.get("student_id", ""))
+            current = best.get(key)
+            if current is None or float(attempt.get("percentage") or 0) > float(
+                current.get("percentage") or 0
+            ):
+                best[key] = attempt
+        return list(best.values())
 
     def answers_for(self, attempt_id: str) -> list[dict[str, Any]]:
         return [a for a in self._all_answers() if a["attempt_id"] == attempt_id]

@@ -501,6 +501,96 @@ def test_exam_editor_page_lists_bank_questions(exam_client) -> None:
     assert "سؤال 1" in page.text
 
 
+def _submit_one_attempt(client: TestClient, exam_id: str) -> str:
+    """Start and submit a single attempt for the standard student, return its id."""
+    headers = _student_headers()
+    started = client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.status_code == 200, started.text
+    attempt_id = started.json()["attempt"]["id"]
+    client.post(
+        f"/api/student/attempts/{attempt_id}/submit", headers=headers
+    )
+    return attempt_id
+
+
+def test_attempts_search_matches_student_name_username_and_exam_title(exam_client) -> None:
+    """The attempts table shows names/titles, so search must resolve those too."""
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1)
+    attempt_id = _submit_one_attempt(exam_client, exam_id)
+
+    # By first name (what the operator sees in the table).
+    by_name = exam_client.get("/api/admin/attempts", params={"search": "سارة"})
+    assert any(a["id"] == attempt_id for a in by_name.json()["attempts"])
+    # By handle, with and without the leading @.
+    for handle in ("sara", "@sara", "@SARA"):
+        hit = exam_client.get("/api/admin/attempts", params={"search": handle})
+        assert any(a["id"] == attempt_id for a in hit.json()["attempts"]), handle
+    # By exam title.
+    by_exam = exam_client.get("/api/admin/attempts", params={"search": "اختبار API"})
+    assert any(a["id"] == attempt_id for a in by_exam.json()["attempts"])
+    # By raw attempt id still works.
+    by_id = exam_client.get("/api/admin/attempts", params={"search": attempt_id})
+    assert any(a["id"] == attempt_id for a in by_id.json()["attempts"])
+
+
+def test_attempts_status_filter(exam_client) -> None:
+    """The status filter must narrow the rows and match the rendered page."""
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1)
+    attempt_id = _submit_one_attempt(exam_client, exam_id)
+
+    submitted = exam_client.get("/api/admin/attempts", params={"status": "submitted"})
+    assert any(a["id"] == attempt_id for a in submitted.json()["attempts"])
+    assert all(a["status"] == "submitted" for a in submitted.json()["attempts"])
+
+    in_progress = exam_client.get("/api/admin/attempts", params={"status": "in_progress"})
+    assert all(a["status"] == "in_progress" for a in in_progress.json()["attempts"])
+    assert not any(a["id"] == attempt_id for a in in_progress.json()["attempts"])
+
+    page = exam_client.get("/attempts", params={"status": "submitted", "search": "سارة"})
+    assert page.status_code == 200
+    assert attempt_id in page.text
+
+
+def test_student_search_ignores_at_prefix(svc) -> None:
+    student = svc.students.touch(_TG(50, first="راشد", last="المانع", username="Rashed_Almanie"))
+    assert [s["id"] for s in svc.students.list_students(search="@Rashed_Almanie")] == [student["id"]]
+    assert [s["id"] for s in svc.students.list_students(search="راشد")] == [student["id"]]
+    assert [s["id"] for s in svc.students.list_students(search="المانع")] == [student["id"]]
+
+
+def test_exam_stats_count_best_attempt_per_student(svc) -> None:
+    """A repeat sitter contributes their best score, not their latest or every try."""
+    q = _ready(svc)
+    exam = svc.exams.create(
+        {"title": "أفضل نتيجة", "access_mode": "always", "max_attempts": 0}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(51))
+
+    first = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.save_answer(first["id"], student["id"], q["id"], 1)  # wrong
+    svc.attempts.submit(first["id"], student["id"])
+
+    second = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.save_answer(second["id"], student["id"], q["id"], 0)  # correct
+    svc.attempts.submit(second["id"], student["id"])
+
+    stats = svc.exams.stats(exam["id"])
+    assert stats["attempts"] == 2
+    assert stats["completed"] == 2
+    assert stats["students_graded"] == 1
+    # Only the 100% attempt counts, so the average is 100 — not the 50 the two
+    # attempts would produce if both were counted.
+    assert stats["average"] == 100.0
+    assert stats["lowest"] == 100.0
+
+    best = svc.attempts.best_per_student(svc.attempts.attempts_for_exam(exam["id"]))
+    assert len(best) == 1
+    assert best[0]["id"] == second["id"]
+
+
 def test_partial_update_keeps_status_and_questions(exam_client) -> None:
     """A PUT that only sends the title must not reset status or drop questions."""
     csrf = _login(exam_client)

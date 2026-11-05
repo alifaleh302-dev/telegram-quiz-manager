@@ -28,11 +28,13 @@
 {% block content %}
 <div class="stat-strip">
   <span class="text-info"><strong>{{ stats.students_started }}</strong> طالب بدأ</span>
-  <span class="text-success"><strong>{{ stats.completed }}</strong> محاولة مكتملة</span>
+  <span class="text-success"><strong>{{ stats.students_graded }}</strong> نتيجة معتمدة</span>
+  <span><strong>{{ stats.completed }}</strong> محاولة مكتملة</span>
   <span><strong>{{ stats.average }}%</strong> المتوسط</span>
   <span><strong>{{ stats.highest }}%</strong> الأعلى</span>
   <span><strong>{{ stats.lowest }}%</strong> الأدنى</span>
 </div>
+<p class="hint mb-3">المتوسط والأعلى والأدنى محسوبة على <strong>أفضل نتيجة</strong> لكل طالب، لا على كل محاولة.</p>
 
 <div class="row g-3">
   <div class="col-lg-5">

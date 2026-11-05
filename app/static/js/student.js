@@ -334,18 +334,18 @@ const SA = (() => {
       <p class="sa-note" id="saResumeNote" hidden></p>
     </div>`);
     const body = el('<div class="sa-card"></div>');
-    const nav = el(`<div class="sa-nav-row">
-      <button class="sa-btn secondary" id="saPrev">السابق</button>
-      <button class="sa-btn" id="saNext">التالي</button>
+    const hint = el(`<p class="sa-nav-hint"><i class="bi bi-hand-index-thumb"></i>
+      للتنقل بين الأسئلة اضغط وسط حافة الشاشة يميناً أو يساراً ثم اضغط السهم.</p>`);
+    const submitBar = el(`<div class="sa-submit-bar">
+      <button class="sa-btn sa-submit" id="saSubmit"><i class="bi bi-send-check"></i> تسليم الاختبار</button>
     </div>`);
-    const submitBtn = el('<button class="sa-btn" id="saSubmit" style="background:#ef4444">تسليم الاختبار</button>');
     const sideNav = el(`<div class="sa-side-nav" id="saSideNav">
       <div class="sa-side-zone sa-side-zone-prev" id="saZonePrev"></div>
       <div class="sa-side-zone sa-side-zone-next" id="saZoneNext"></div>
       <button class="sa-side-arrow sa-side-arrow-prev" id="saArrowPrev" aria-label="السؤال السابق"><i class="bi bi-chevron-right"></i></button>
       <button class="sa-side-arrow sa-side-arrow-next" id="saArrowNext" aria-label="السؤال التالي"><i class="bi bi-chevron-left"></i></button>
     </div>`);
-    wrap.append(top, body, nav, submitBtn, sideNav);
+    wrap.append(top, body, hint, submitBar, sideNav);
     setHeader(data.exam.title, 'قيد التنفيذ', false);
     render(wrap);
 
@@ -381,8 +381,6 @@ const SA = (() => {
       });
       const first = index === 0;
       const last = index === questions.length - 1;
-      document.getElementById('saPrev').disabled = first;
-      document.getElementById('saNext').hidden = last;
       sideNavEl.classList.toggle('hide-prev', first);
       sideNavEl.classList.toggle('hide-next', last);
     }
@@ -412,8 +410,6 @@ const SA = (() => {
       );
     }
 
-    document.getElementById('saPrev').addEventListener('click', () => move(-1));
-    document.getElementById('saNext').addEventListener('click', () => move(1));
     bindSideNav();
     document.getElementById('saSubmit').addEventListener('click', () => confirmSubmit(data.attempt.id, answers, questions));
     paint();

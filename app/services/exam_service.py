@@ -405,12 +405,21 @@ class ExamService:
         attempts = self.attempts_for(exam_id)
         submitted = [a for a in attempts if a.get("status") == "submitted"]
         started_students = {a["student_id"] for a in attempts}
-        scores = [float(a.get("percentage") or 0) for a in submitted]
+        # A student's counted result is their best submitted attempt, so a
+        # repeat sitter does not drag the average or skew highest/lowest.
+        best: dict[str, float] = {}
+        for attempt in submitted:
+            score = float(attempt.get("percentage") or 0)
+            sid = attempt["student_id"]
+            if sid not in best or score > best[sid]:
+                best[sid] = score
+        scores = list(best.values())
         return {
             "questions": self.question_count(exam_id),
             "attempts": len(attempts),
             "completed": len(submitted),
             "students_started": len(started_students),
+            "students_graded": len(best),
             "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
             "highest": round(max(scores), 1) if scores else 0.0,
             "lowest": round(min(scores), 1) if scores else 0.0,

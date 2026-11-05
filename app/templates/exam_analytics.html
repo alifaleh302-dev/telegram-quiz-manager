@@ -11,6 +11,7 @@
   <span class="text-success"><strong>{{ totals.completed }}</strong> مكتملة</span>
   <span><strong>{{ totals.average }}%</strong> المتوسط</span>
 </div>
+<p class="hint mb-3">تُحتسب الإحصائيات على أساس <strong>أفضل نتيجة</strong> لكل طالب في كل اختبار ({{ totals.graded }} نتيجة معتمدة)، وليس على كل المحاولات.</p>
 
 <div class="row g-3">
   <div class="col-lg-6">
@@ -46,6 +47,7 @@
             <th>الأسئلة</th>
             <th>المحاولات</th>
             <th>المكتملة</th>
+            <th>طلاب مُقيَّمون</th>
             <th>المتوسط</th>
             <th>الأعلى</th>
             <th>الأدنى</th>
@@ -58,6 +60,7 @@
             <td>{{ exam.questions }}</td>
             <td>{{ exam.attempts }}</td>
             <td>{{ exam.completed }}</td>
+            <td>{{ exam.students_graded }}</td>
             <td>{{ exam.average }}%</td>
             <td>{{ exam.highest }}%</td>
             <td>{{ exam.lowest }}%</td>

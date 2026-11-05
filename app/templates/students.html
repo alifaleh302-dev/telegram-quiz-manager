@@ -25,7 +25,8 @@
             <th>تيليجرام</th>
             <th>المحاولات</th>
             <th>المكتملة</th>
-            <th>المتوسط</th>
+            <th>نتائج معتمدة</th>
+            <th>المتوسط (أفضل نتيجة)</th>
             <th>آخر ظهور</th>
             <th>التنبيهات</th>
           </tr>
@@ -38,6 +39,7 @@
             <td class="hint">{{ '@' ~ student.username if student.username else student.telegram_user_id }}</td>
             <td>{{ student.attempts }}</td>
             <td>{{ student.completed }}</td>
+            <td>{{ student.graded }}</td>
             <td>{{ student.average }}%</td>
             <td class="hint">{{ student.last_seen_at }}</td>
             <td>

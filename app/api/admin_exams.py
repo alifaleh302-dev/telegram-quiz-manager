@@ -210,12 +210,14 @@ async def admin_list_students(
     for student in students:
         attempts = services.attempts.attempts_for_student(student["id"])
         submitted = [a for a in attempts if a.get("status") == "submitted"]
-        scores = [float(a.get("percentage") or 0) for a in submitted]
+        best = services.attempts.best_per_student(submitted)
+        scores = [float(a.get("percentage") or 0) for a in best]
         rows.append(
             {
                 **services.students.view(student),
                 "attempts": len(attempts),
                 "completed": len(submitted),
+                "graded": len(best),
                 "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
             }
         )
@@ -254,6 +256,21 @@ async def admin_reset_attempts(
 
 # --- attempts --------------------------------------------------------------
 
+def _search_scopes(services: Any, search: str) -> tuple[set[str], set[str]]:
+    """Resolve a free-text attempt search into student ids and exam ids.
+
+    The attempts table shows a student *name* and an exam *title*, so a search
+    typed against what the operator sees (``@Rashed_Almanie`` or an exam title)
+    must resolve through the student and exam records rather than the raw ids.
+    """
+    text = (search or "").strip().lstrip("@").lower()
+    if not text:
+        return set(), set()
+    student_ids = {s["id"] for s in services.students.list_students(search=text)}
+    exam_ids = {e["id"] for e in services.exams.list_exams(search=text)}
+    return student_ids, exam_ids
+
+
 @router.get("/attempts")
 async def admin_list_attempts(
     request: Request,
@@ -264,8 +281,11 @@ async def admin_list_attempts(
     services = get_services(request)
     exams = {e["id"]: e for e in services.exams.list_exams()}
     students = {s["id"]: services.students.view(s) for s in services.students.list_students()}
+    student_ids, exam_ids = _search_scopes(services, search)
     rows = []
-    for attempt in services.attempts.all_attempts(status=status, search=search):
+    for attempt in services.attempts.all_attempts(
+        status=status, search=search, student_ids=student_ids, exam_ids=exam_ids
+    ):
         rows.append(
             {
                 **attempt,
@@ -298,7 +318,8 @@ async def admin_exam_analytics(
     students = services.students.list_students()
     attempts = services.attempts.all_attempts()
     submitted = [a for a in attempts if a.get("status") == "submitted"]
-    scores = [float(a.get("percentage") or 0) for a in submitted]
+    best = services.attempts.best_per_student(submitted)
+    scores = [float(a.get("percentage") or 0) for a in best]
     exams = services.exams.list_exams()
 
     # Per-question difficulty: count wrong answers against each bank question.
@@ -334,6 +355,7 @@ async def admin_exam_analytics(
             "published_exams": sum(1 for e in exams if e.get("status") in ("published", "scheduled")),
             "attempts": len(attempts),
             "completed": len(submitted),
+            "graded": len(best),
             "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
             "highest": round(max(scores), 1) if scores else 0.0,
             "lowest": round(min(scores), 1) if scores else 0.0,
@@ -470,12 +492,14 @@ async def students_page(
     for student in services.students.list_students(search=search):
         attempts = services.attempts.attempts_for_student(student["id"])
         submitted = [a for a in attempts if a.get("status") == "submitted"]
-        scores = [float(a.get("percentage") or 0) for a in submitted]
+        best = services.attempts.best_per_student(submitted)
+        scores = [float(a.get("percentage") or 0) for a in best]
         rows.append(
             {
                 **services.students.view(student),
                 "attempts": len(attempts),
                 "completed": len(submitted),
+                "graded": len(best),
                 "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
             }
         )
@@ -499,8 +523,11 @@ async def attempts_page(
     services = get_services(request)
     exams = {e["id"]: e for e in services.exams.list_exams()}
     students = {s["id"]: services.students.view(s) for s in services.students.list_students()}
+    student_ids, exam_ids = _search_scopes(services, search)
     rows = []
-    for attempt in services.attempts.all_attempts(status=status, search=search):
+    for attempt in services.attempts.all_attempts(
+        status=status, search=search, student_ids=student_ids, exam_ids=exam_ids
+    ):
         rows.append(
             {
                 **attempt,
@@ -526,7 +553,9 @@ async def exam_analytics_page(
     students = services.students.list_students()
     attempts = services.attempts.all_attempts()
     submitted = [a for a in attempts if a.get("status") == "submitted"]
-    scores = [float(a.get("percentage") or 0) for a in submitted]
+    # Aggregates count each student's *best* attempt per exam, not every try.
+    best = services.attempts.best_per_student(submitted)
+    scores = [float(a.get("percentage") or 0) for a in best]
     exams = services.exams.list_exams()
 
     # Score distribution buckets for the chart.
@@ -558,6 +587,7 @@ async def exam_analytics_page(
                 "exams": len(exams),
                 "attempts": len(attempts),
                 "completed": len(submitted),
+                "graded": len(best),
                 "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
                 "highest": round(max(scores), 1) if scores else 0.0,
                 "lowest": round(min(scores), 1) if scores else 0.0,
