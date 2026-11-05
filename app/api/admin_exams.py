@@ -70,6 +70,20 @@ def _exam_view(exam: dict[str, Any], services: Any) -> dict[str, Any]:
     }
 
 
+def _notify_if_live(services: Any, exam: dict[str, Any]) -> int:
+    """Broadcast a 'new exam' notice when an exam is (or becomes) live.
+
+    Honours the global ``notifications.on_publish`` switch. A ``scheduled`` exam
+    whose window has not opened notifies nobody yet; the due-exam sweep in the
+    scheduler sends it once the window opens.
+    """
+    if not services.app_settings.notifications_config().get("on_publish", True):
+        return 0
+    if exam.get("status") not in ("published", "scheduled"):
+        return 0
+    return services.notifications.notify_exam_published(exam)
+
+
 # --- exams -----------------------------------------------------------------
 
 @router.get("/exams")
@@ -124,9 +138,17 @@ async def admin_update_exam(
     # A PUT is treated as a partial update: only the fields actually sent are
     # changed, so editing a title does not silently reset status or questions.
     data = payload.model_dump(exclude_unset=True)
+    previous = services.exams.get(exam_id)
+    was_live = (previous or {}).get("status") in ("published", "scheduled")
     question_ids = data.pop("question_ids", None)
     exam = services.exams.update(exam_id, data, question_ids, actor=session.username)
-    return _exam_view(exam, services)
+    # Editing an exam into a live status (draft → published) must announce it,
+    # exactly as the dedicated publish endpoint does; the (student, exam, type)
+    # dedupe stops a re-save from sending it twice.
+    notified = 0
+    if not was_live:
+        notified = _notify_if_live(services, exam)
+    return {**_exam_view(exam, services), "notified": notified}
 
 
 @router.delete("/exams/{exam_id}")
@@ -156,10 +178,27 @@ async def admin_publish_exam(
     services = get_services(request)
     exam = services.exams.publish(exam_id, actor=session.username)
     # Notify students only for a genuinely live exam (not a future window).
-    notified = 0
-    if exam.get("status") == "published":
-        notified = services.notifications.notify_exam_published(exam)
+    notified = _notify_if_live(services, exam)
     return {"exam": _exam_view(exam, services), "notified": notified}
+
+
+@router.post("/exams/{exam_id}/notify")
+async def admin_notify_exam(
+    request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
+) -> dict[str, Any]:
+    """Manually (re)send the 'new exam' notice to every eligible student.
+
+    Dedupe means a student already notified for this exam is skipped, so this is
+    safe to press again after adding new students.
+    """
+    services = get_services(request)
+    exam = services.exams.get(exam_id)
+    if exam is None:
+        raise ValidationError(f"الاختبار {exam_id} غير موجود.")
+    if exam.get("status") not in ("published", "scheduled"):
+        raise ValidationError("لا يمكن إشعار الطلاب قبل نشر الاختبار.")
+    notified = services.notifications.notify_exam_published(exam)
+    return {"ok": True, "notified": notified, "exam": _exam_view(exam, services)}
 
 
 @router.post("/exams/{exam_id}/close")

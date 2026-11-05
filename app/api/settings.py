@@ -16,11 +16,67 @@ from app.api.deps import (
     require_admin,
 )
 from app.core.logging import get_logger
+from app.core.messages import DEFAULTS as MESSAGE_DEFAULTS
 from app.storage.validators import ValidationError
 
 logger = get_logger(__name__)
 
 router = APIRouter(tags=["settings"])
+
+# Labels for the editable message templates, in the order shown on the page.
+MESSAGE_FIELDS: list[dict[str, Any]] = [
+    {
+        "key": "welcome",
+        "label": "رسالة الترحيب (/start)",
+        "hint": "تُرسل عند فتح محادثة البوت أو كتابة /start.",
+        "rows": 8,
+    },
+    {
+        "key": "exam_published_title",
+        "label": "عنوان إشعار الاختبار الجديد",
+        "hint": "سطر العنوان في رسالة «اختبار جديد».",
+        "rows": 1,
+    },
+    {
+        "key": "exam_published_body",
+        "label": "نص إشعار الاختبار الجديد",
+        "hint": "يدعم {exam_title} و {question_count} و {starts_at}.",
+        "rows": 3,
+    },
+    {
+        "key": "exam_upcoming_title",
+        "label": "عنوان إشعار الاختبار القادم",
+        "hint": "يُستخدم للاختبارات المجدولة قبل بدئها.",
+        "rows": 1,
+    },
+    {
+        "key": "exam_upcoming_body",
+        "label": "نص إشعار الاختبار القادم",
+        "hint": "يدعم {exam_title} و {starts_at}.",
+        "rows": 3,
+    },
+    {
+        "key": "attempt_completed_title",
+        "label": "عنوان إشعار تسليم المحاولة",
+        "hint": "سطر العنوان عند تسليم الطالب لمحاولته.",
+        "rows": 1,
+    },
+    {
+        "key": "attempt_completed_body",
+        "label": "نص إشعار تسليم المحاولة",
+        "hint": "يدعم {exam_title} و {percentage}.",
+        "rows": 3,
+    },
+]
+
+# Arabic labels for the notification-type switches.
+NOTIFY_TYPE_FIELDS: list[dict[str, str]] = [
+    {"key": "exam_published", "label": "نشر اختبار جديد"},
+    {"key": "exam_upcoming", "label": "اختبار قادم"},
+    {"key": "exam_closing_soon", "label": "قرب إغلاق الاختبار"},
+    {"key": "attempt_completed", "label": "تسليم المحاولة"},
+    {"key": "result_available", "label": "توفّر النتيجة"},
+]
 
 
 class PasswordIn(BaseModel):
@@ -56,6 +112,13 @@ async def settings_page(request: Request, session=Depends(require_page_session))
         "settings.html",
         {
             "config": services.app_settings.get(),
+            "messages": services.app_settings.messages(),
+            "message_fields": [
+                {**field, "default": MESSAGE_DEFAULTS.get(field["key"], "")}
+                for field in MESSAGE_FIELDS
+            ],
+            "notify": services.app_settings.notifications_config(),
+            "notify_type_fields": NOTIFY_TYPE_FIELDS,
             "bot": await services.telegram.get_me(),
             "token": services.secrets.status(),
             "backups": services.backups.list_backups()[:15],

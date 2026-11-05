@@ -1164,9 +1164,49 @@ const TQM = (() => {
     });
   }
 
+  function initMessagesForm() {
+    const form = document.getElementById('messagesForm');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const messages = {};
+      form.querySelectorAll('textarea[name]').forEach((el) => { messages[el.name] = el.value; });
+      const result = await api('/api/settings', { method: 'PUT', body: { messages } });
+      toast(result.ok ? 'تم حفظ الرسائل' : result.error, result.ok ? 'success' : 'error');
+    });
+    document.getElementById('messagesReset')?.addEventListener('click', () => {
+      if (!confirm('استعادة النصوص الافتراضية؟ سيستبدل المحتوى الحالي بعد الحفظ.')) return;
+      // Each textarea carries its shipped default in the placeholder attribute.
+      form.querySelectorAll('textarea[name]').forEach((el) => { el.value = el.placeholder || ''; });
+      toast('تمت استعادة النص الافتراضي — اضغط «حفظ الرسائل» للتأكيد', 'warning');
+    });
+  }
+
+  function initNotifyForm() {
+    const form = document.getElementById('notifyForm');
+    if (!form) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const types = {};
+      form.querySelectorAll('input[type=checkbox][name]').forEach((el) => {
+        if (el.name !== 'notify_on_publish') types[el.name] = el.checked;
+      });
+      const result = await api('/api/settings', {
+        method: 'PUT',
+        body: {
+          notifications: { on_publish: data.get('notify_on_publish') === 'on', types },
+        },
+      });
+      toast(result.ok ? 'تم حفظ إعدادات الإشعارات' : result.error, result.ok ? 'success' : 'error');
+    });
+  }
+
   function initSettingsForms() {
     initTokenForm();
     userbotForm();
+    initMessagesForm();
+    initNotifyForm();
     const settingsForm = document.getElementById('settingsForm');
     settingsForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -1323,10 +1363,17 @@ const TQM = (() => {
   // --- exam platform (admin) ----------------------------------------------
   async function examAction(examId, action) {
     if (action === 'delete' && !confirm(`حذف الاختبار ${examId}؟ لا يمكن التراجع.`)) return;
-    const labels = { publish: 'نشر الاختبار', close: 'إغلاق الاختبار', reopen: 'إعادة فتح الاختبار', archive: 'أرشفة الاختبار', delete: 'حذف الاختبار' };
+    const labels = {
+      publish: 'نشر الاختبار', notify: 'إشعار الطلاب', close: 'إغلاق الاختبار',
+      reopen: 'إعادة فتح الاختبار', archive: 'أرشفة الاختبار', delete: 'حذف الاختبار',
+    };
     const result = await api(`/api/admin/exams/${examId}/${action}`, { method: action === 'delete' ? 'DELETE' : 'POST' });
     if (result.ok) {
-      toast(`${labels[action] || action}: تم بنجاح`);
+      const notified = result.data?.notified;
+      const suffix = typeof notified === 'number' && (action === 'publish' || action === 'notify')
+        ? ` — تم إشعار ${notified} طالباً`
+        : '';
+      toast(`${labels[action] || action}: تم بنجاح${suffix}`);
       setTimeout(() => window.location.reload(), 700);
     } else {
       toast(result.error, 'error');

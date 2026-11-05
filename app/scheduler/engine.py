@@ -23,6 +23,7 @@ ANALYTICS_JOB_ID = "analytics:auto-collect"
 # Exam platform: close timed-out attempts and deliver pending notifications.
 EXAM_SWEEP_JOB_ID = "exam:sweep-attempts"
 NOTIFY_JOB_ID = "exam:dispatch-notifications"
+DUE_EXAM_JOB_ID = "exam:notify-due"
 
 
 class SchedulerEngine:
@@ -129,6 +130,16 @@ class SchedulerEngine:
                 replace_existing=True,
                 max_instances=1,
             )
+            # Scheduled exams that have just become startable need the same
+            # "new exam" notice the publish endpoint sends for a live exam.
+            self._scheduler.add_job(
+                self._notify_due_exams,
+                trigger=IntervalTrigger(minutes=5),
+                id=DUE_EXAM_JOB_ID,
+                name="إشعار الاختبارات المستحقة",
+                replace_existing=True,
+                max_instances=1,
+            )
 
     async def _sweep_attempts(self) -> None:
         try:
@@ -145,6 +156,14 @@ class SchedulerEngine:
                 logger.info("notification dispatch: %s", summary)
         except Exception:  # noqa: BLE001
             logger.exception("notification dispatch failed")
+
+    async def _notify_due_exams(self) -> None:
+        try:
+            created = self._notifications.notify_due_exams()
+            if created:
+                logger.info("announced %s newly available exam(s)", created)
+        except Exception:  # noqa: BLE001
+            logger.exception("due-exam notification sweep failed")
 
     def _add_schedule(self, schedule: dict[str, Any]) -> bool:
         if not schedule.get("enabled", True):

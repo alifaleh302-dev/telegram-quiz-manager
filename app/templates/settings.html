@@ -195,6 +195,71 @@
   </div>
 </div>
 
+<div class="grid-two">
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-chat-square-text"></i> رسائل البوت والترحيب</h2></div>
+    <div class="panel-body">
+      <p class="hint">
+        <i class="bi bi-info-circle"></i>
+        خصّص النصوص التي يرسلها البوت. اترك الحقل فارغاً لاستخدام النص الافتراضي.
+        يمكن استخدام المتغيّرات التالية داخل الرسالة وسيتم استبدالها تلقائياً.
+      </p>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>المتغيّر</th><th>يُستبدل بـ</th></tr></thead>
+          <tbody>
+            <tr><td><code>{exam_title}</code></td><td>اسم الاختبار</td></tr>
+            <tr><td><code>{question_count}</code></td><td>عدد أسئلة الاختبار</td></tr>
+            <tr><td><code>{starts_at}</code></td><td>موعد بدء الاختبار (للاختبارات المجدولة)</td></tr>
+            <tr><td><code>{percentage}</code></td><td>نسبة نتيجة الطالب</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <form id="messagesForm">
+        {% for field in message_fields %}
+        <div class="mb-3">
+          <label class="form-label" for="msg_{{ field.key }}">{{ field.label }}</label>
+          <textarea class="form-control" id="msg_{{ field.key }}" name="{{ field.key }}"
+                    rows="{{ field.rows or 2 }}" dir="auto"
+                    placeholder="{{ field.default }}">{{ messages.get(field.key) or '' }}</textarea>
+          <div class="form-text">{{ field.hint }}</div>
+        </div>
+        {% endfor %}
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ الرسائل</button>
+        <button class="btn btn-outline-light" type="button" id="messagesReset"><i class="bi bi-arrow-counterclockwise"></i> استعادة الافتراضي</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header"><h2><i class="bi bi-bell"></i> الإشعارات</h2></div>
+    <div class="panel-body">
+      <form id="notifyForm">
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="notify_on_publish"
+                 id="notifyOnPublish" {{ 'checked' if notify.on_publish }}>
+          <label class="form-check-label" for="notifyOnPublish">
+            إشعار الطلاب تلقائياً عند نشر اختبار جديد
+          </label>
+          <div class="hint">
+            عند نشر اختبار يرسل البوت رسالة خاصة لكل طالب عبر تيليجرام.
+          </div>
+        </div>
+        <hr class="my-3">
+        <h3 class="h6 mb-2">أنواع الإشعارات</h3>
+        {% for item in notify_type_fields %}
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" name="{{ item.key }}"
+                 id="nt_{{ item.key }}" {{ 'checked' if notify.types.get(item.key, True) }}>
+          <label class="form-check-label" for="nt_{{ item.key }}">{{ item.label }}</label>
+        </div>
+        {% endfor %}
+        <button class="btn btn-primary mt-3" type="submit"><i class="bi bi-save"></i> حفظ الإشعارات</button>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div class="panel">
   <div class="panel-header">
     <h2><i class="bi bi-person-badge"></i> حسابات userbot</h2>

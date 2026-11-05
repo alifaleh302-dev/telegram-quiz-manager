@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from app.core.logging import get_logger
+from app.core.messages import DEFAULTS as DEFAULT_MESSAGES
 
 logger = get_logger(__name__)
 
@@ -439,6 +440,17 @@ class Storage:
                 "daily_limit": 0,
                 "analytics": {"auto_collect": False, "auto_collect_hours": 6},
                 "transport": {"default_mode": "bot"},
+                "notifications": {
+                    "on_publish": True,
+                    "types": {
+                        "exam_published": True,
+                        "exam_upcoming": True,
+                        "exam_closing_soon": True,
+                        "attempt_completed": True,
+                        "result_available": True,
+                    },
+                },
+                "messages": dict(DEFAULT_MESSAGES),
                 "paused_schedules": [],
                 "state": {},
             },

@@ -736,3 +736,186 @@ def test_mini_app_url_empty_when_nothing_known(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mini_app_url", "")
     monkeypatch.setattr(settings, "telegram_webhook_url", "")
     assert asyncio.run(_bot_manager()._resolve_mini_app_url(_FakeApp(""))) == ""
+
+
+# --- editable bot messages + notification toggles --------------------------
+
+def test_render_message_uses_defaults_and_substitutes() -> None:
+    from app.core.messages import render, template_text
+
+    assert "{exam_title}" in template_text({}, "exam_published_body")
+    rendered = render({}, "exam_published_body", {"exam_title": "الشبكات", "question_count": 3})
+    assert "الشبكات" in rendered and "3" in rendered
+    assert "{" not in rendered  # every placeholder was substituted
+
+
+def test_render_message_unknown_placeholder_is_left_alone() -> None:
+    from app.core.messages import render
+
+    rendered = render({"exam_published_body": "أهلاً {exam_title} {unknown}"}, "exam_published_body", {"exam_title": "س"})
+    assert rendered == "أهلاً س {unknown}"
+
+
+def test_render_message_falls_back_when_blank() -> None:
+    from app.core.messages import render, template_text
+
+    # A blank stored template must never produce an empty message.
+    assert template_text({"welcome": "   "}, "welcome") == template_text({}, "welcome")
+    assert render({"welcome": ""}, "welcome") != ""
+
+
+def test_settings_messages_roundtrip(svc) -> None:
+    svc.app_settings.update({"messages": {"welcome": "مرحباً {exam_title}"}})
+    assert svc.app_settings.messages()["welcome"] == "مرحباً {exam_title}"
+    # Omitted keys keep their previous value / default.
+    assert svc.app_settings.messages()["exam_published_title"]
+
+
+def test_settings_messages_reject_overlong(svc) -> None:
+    with pytest.raises(ValidationError):
+        svc.app_settings.update({"messages": {"welcome": "x" * 2001}})
+
+
+def test_settings_notifications_roundtrip(svc) -> None:
+    svc.app_settings.update({"notifications": {"on_publish": False, "types": {"exam_published": False}}})
+    config = svc.app_settings.notifications_config()
+    assert config["on_publish"] is False
+    assert config["types"]["exam_published"] is False
+    assert config["types"]["attempt_completed"] is True  # untouched default
+
+
+def test_notify_exam_published_uses_custom_message(svc) -> None:
+    import asyncio
+
+    svc.app_settings.update({"messages": {"exam_published_title": "عنوان مخصص", "exam_published_body": "اختبار {exam_title}"}})
+    q = _ready(svc)
+    exam = svc.exams.create({"title": "الشبكات", "access_mode": "always"}, [q["id"]])
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(31))
+    created = svc.notifications.notify_exam_published(exam)
+    assert created == 1
+    note = svc.notifications.for_student(student["id"])[0]
+    assert note["title"] == "عنوان مخصص"
+    assert note["body"] == "اختبار الشبكات"
+    asyncio.run(svc.notifications.dispatch())
+    assert svc.notifications.for_student(student["id"])[0]["status"] == "sent"
+
+
+def test_notify_exam_published_respects_type_toggle(svc) -> None:
+    svc.app_settings.update({"notifications": {"on_publish": True, "types": {"exam_published": False}}})
+    q = _ready(svc)
+    exam = svc.exams.create({"title": "معطّل", "access_mode": "always"}, [q["id"]])
+    svc.exams.publish(exam["id"])
+    svc.students.touch(_TG(32))
+    assert svc.notifications.notify_exam_published(exam) == 0
+
+
+def test_due_scheduled_exam_is_notified_once_window_opens(svc) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    q = _ready(svc)
+    future = svc.exams.create(
+        {
+            "title": "مجدول",
+            "access_mode": "scheduled",
+            "starts_at": (now + timedelta(hours=2)).isoformat(),
+            "ends_at": (now + timedelta(hours=4)).isoformat(),
+        },
+        [q["id"]],
+    )
+    svc.exams.publish(future["id"])
+    student = svc.students.touch(_TG(33))
+    # Window has not opened: no notification yet.
+    assert svc.notifications.notify_due_exams() == 0
+    assert svc.notifications.for_student(student["id"]) == []
+
+    # Move the window into the past (now open) and sweep again.
+    def _open(doc):
+        for e in doc["exams"]:
+            if e["id"] == future["id"]:
+                e["starts_at"] = (now - timedelta(minutes=1)).isoformat()
+
+    svc.storage.exams.update(_open)
+    assert svc.notifications.notify_due_exams() == 1
+    # A second sweep must not duplicate.
+    assert svc.notifications.notify_due_exams() == 0
+    assert len(svc.notifications.for_student(student["id"])) == 1
+
+
+def test_publish_via_put_status_notifies_students(exam_client) -> None:
+    csrf = _login(exam_client)
+    q = exam_client.post(
+        "/api/questions",
+        json={"question": "س", "options": ["أ", "ب"], "correct_option_id": 0, "status": "ready"},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    created = exam_client.post(
+        "/api/admin/exams",
+        json={"title": "بالتعديل", "access_mode": "always", "question_ids": [q["id"]]},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    exam_id = created["id"]
+    # A draft exam notifies nobody, so the student exists before it goes live.
+    exam_client.post(
+        "/api/student/auth",
+        json={"init_data": build_init_data(STUDENT_USER, BOT_TOKEN)},
+    )
+    updated = exam_client.put(
+        f"/api/admin/exams/{exam_id}",
+        json={"title": "بالتعديل", "status": "published"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["notified"] == 1
+
+
+def test_manual_notify_endpoint(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1)
+    # The publish call already notified the (then-unknown) student set; a fresh
+    # student added afterwards is picked up by the manual notify.
+    exam_client.post(
+        "/api/student/auth",
+        json={"init_data": build_init_data({**STUDENT_USER, "id": 880880}, BOT_TOKEN)},
+    )
+    response = exam_client.post(
+        f"/api/admin/exams/{exam_id}/notify", headers={"X-CSRF-Token": csrf}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["notified"] >= 1
+
+
+def test_manual_notify_rejects_draft(exam_client) -> None:
+    csrf = _login(exam_client)
+    q = exam_client.post(
+        "/api/questions",
+        json={"question": "س", "options": ["أ", "ب"], "correct_option_id": 0, "status": "ready"},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    exam = exam_client.post(
+        "/api/admin/exams",
+        json={"title": "مسودة", "question_ids": [q["id"]]},
+        headers={"X-CSRF-Token": csrf},
+    ).json()
+    response = exam_client.post(
+        f"/api/admin/exams/{exam['id']}/notify", headers={"X-CSRF-Token": csrf}
+    )
+    assert response.status_code == 400
+
+
+def test_settings_page_shows_messages_section(exam_client) -> None:
+    _login(exam_client)
+    response = exam_client.get("/settings")
+    assert response.status_code == 200
+    assert "رسائل البوت والترحيب" in response.text
+    assert "welcome" in response.text
+    assert "notifyOnPublish" in response.text
+
+
+def test_welcome_message_uses_custom_template(svc) -> None:
+    from app.telegram.bot import BotManager
+
+    svc.app_settings.update({"messages": {"welcome": "أهلاً بك في المنصة"}})
+    bot = BotManager({"app_settings": svc.app_settings}, secret_store=None)
+    assert bot._welcome_text() == "أهلاً بك في المنصة"

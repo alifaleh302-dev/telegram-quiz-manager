@@ -16,6 +16,7 @@ import asyncio
 from typing import Any
 
 from app.core.logging import get_logger
+from app.core.messages import render as render_message
 from app.services.audit_service import AuditService
 from app.services.exam_service import ExamService
 from app.services.student_service import StudentService
@@ -46,16 +47,40 @@ class NotificationService:
         students: StudentService,
         exams: ExamService,
         transport: Any = None,
+        settings: Any = None,
     ) -> None:
         self._storage = storage
         self._audit = audit
         self._students = students
         self._exams = exams
         self._transport = transport
+        self._settings = settings
         self._sleep = asyncio.sleep
 
     def set_transport(self, transport: Any) -> None:
         self._transport = transport
+
+    # --- configuration -----------------------------------------------------
+    def _messages(self) -> dict[str, Any]:
+        return self._settings.messages() if self._settings is not None else {}
+
+    def _type_enabled(self, type: str) -> bool:
+        if self._settings is None:
+            return DEFAULT_TYPES.get(type, True)
+        return self._settings.notify_type_enabled(type)
+
+    def _published_targets(self, exam: dict[str, Any]) -> list[str]:
+        """Student ids eligible for a 'new exam' notice for ``exam``.
+
+        Only students who can actually sit the exam are notified: a published
+        exam is available to everyone, but a scheduled one is advertised only to
+        students for whom the window has already opened.
+        """
+        students = self._students.list_students()
+        if exam.get("access_mode") != "scheduled":
+            return [s["id"] for s in students]
+        # A scheduled exam is advertised only once its window has opened.
+        return [s["id"] for s in students] if self._exams.can_start(exam)[0] else []
 
     # --- reads -------------------------------------------------------------
     def _all(self) -> list[dict[str, Any]]:
@@ -137,20 +162,36 @@ class NotificationService:
 
         return self._storage.notifications.update(_mutate)
 
-    def notify_exam_published(self, exam: dict[str, Any], *, student_ids: list[str] | None = None) -> int:
-        """Fan out a 'new exam' notification to every eligible student."""
-        targets = student_ids or [s["id"] for s in self._students.list_students()]
-        body = (
-            f"اختبار جديد: {exam['title']}\n"
-            f"عدد الأسئلة: {self._exams.question_count(exam['id'])}"
+    def notify_exam_published(
+        self, exam: dict[str, Any], *, student_ids: list[str] | None = None
+    ) -> int:
+        """Fan out a 'new exam' notification to every eligible student.
+
+        The message text comes from the admin-editable ``exam_published``
+        templates; the type can be switched off entirely in settings.
+        """
+        if not self._type_enabled("exam_published"):
+            return 0
+        targets = (
+            list(student_ids)
+            if student_ids is not None
+            else self._published_targets(exam)
         )
+        messages = self._messages()
+        title = render_message(messages, "exam_published_title")
+        context = {
+            "exam_title": exam.get("title", ""),
+            "question_count": self._exams.question_count(exam["id"]),
+            "starts_at": exam.get("starts_at") or "",
+        }
+        body = render_message(messages, "exam_published_body", context)
         created = 0
         for student_id in targets:
             if self.enqueue(
                 student_id=student_id,
                 exam_id=exam["id"],
                 type="exam_published",
-                title="اختبار جديد متاح",
+                title=title,
                 body=body,
             ):
                 created += 1
@@ -165,13 +206,40 @@ class NotificationService:
     def notify_attempt_completed(
         self, attempt: dict[str, Any], exam: dict[str, Any]
     ) -> dict[str, Any] | None:
+        if not self._type_enabled("attempt_completed"):
+            return None
+        messages = self._messages()
         return self.enqueue(
             student_id=attempt["student_id"],
             exam_id=exam["id"],
             type="attempt_completed",
-            title="تم تسليم محاولتك",
-            body=f"{exam['title']}\nالنتيجة: {attempt.get('percentage', 0)}%",
+            title=render_message(messages, "attempt_completed_title"),
+            body=render_message(
+                messages,
+                "attempt_completed_body",
+                {
+                    "exam_title": exam.get("title", ""),
+                    "percentage": attempt.get("percentage", 0),
+                },
+            ),
         )
+
+    def notify_due_exams(self) -> int:
+        """Announce scheduled exams whose window has just opened.
+
+        A scheduled exam is published with status ``scheduled`` and only becomes
+        startable later, so it never triggers the publish broadcast. This sweep
+        (run by the scheduler) enqueues the same 'new exam' notice once the
+        window opens; the ``(student, exam, type)`` dedupe keeps it to one.
+        """
+        if not self._type_enabled("exam_published"):
+            return 0
+        created = 0
+        for exam in self._exams.list_exams(status="scheduled"):
+            if not self._exams.can_start(exam)[0]:
+                continue
+            created += self.notify_exam_published(exam)
+        return created
 
     # --- delivery ----------------------------------------------------------
     async def dispatch(self, *, limit: int = 50) -> dict[str, int]:

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.messages import DEFAULTS as DEFAULT_MESSAGES
+from app.core.messages import TEMPLATE_KEYS
 from app.core.timezones import is_valid_timezone
 from app.services.audit_service import AuditService
 from app.storage.sqlite_manager import Storage
-from app.storage.validators import ValidationError
+from app.storage.validators import NOTIFICATION_TYPES, ValidationError
 
 _EDITABLE_KEYS = {
     "timezone",
@@ -21,7 +23,12 @@ _EDITABLE_KEYS = {
     "daily_limit",
     "analytics",
     "transport",
+    "notifications",
+    "messages",
 }
+
+# Longest accepted message template; guards against pasting an entire document.
+_MAX_TEMPLATE_LENGTH = 2000
 
 
 class SettingsService:
@@ -73,6 +80,33 @@ class SettingsService:
                     if mode not in ("bot", "userbot"):
                         raise ValidationError("نوع النشر الافتراضي يجب أن يكون bot أو userbot.")
                     document["transport"] = {"default_mode": mode}
+                elif key == "notifications":
+                    types = value.get("types") or {}
+                    document["notifications"] = {
+                        "on_publish": bool(value.get("on_publish", True)),
+                        "types": {
+                            name: bool(types.get(name, True))
+                            for name in NOTIFICATION_TYPES
+                        },
+                    }
+                elif key == "messages":
+                    cleaned: dict[str, str] = {}
+                    for name in TEMPLATE_KEYS:
+                        if name not in value:
+                            # Keep the existing value when a key is omitted so a
+                            # partial save never wipes an unrelated template.
+                            cleaned[name] = str(
+                                (document.get("messages") or {}).get(name)
+                                or DEFAULT_MESSAGES[name]
+                            ).strip()
+                            continue
+                        text = str(value.get(name) or "").strip()
+                        if len(text) > _MAX_TEMPLATE_LENGTH:
+                            raise ValidationError(
+                                f"نص الرسالة «{name}» أطول من {_MAX_TEMPLATE_LENGTH} حرفاً."
+                            )
+                        cleaned[name] = text
+                    document["messages"] = cleaned
                 elif key == "timezone":
                     zone = str(value or "").strip()
                     if not is_valid_timezone(zone):
@@ -100,3 +134,26 @@ class SettingsService:
     @property
     def publishing_enabled(self) -> bool:
         return bool(self._storage.settings.read().get("publishing_enabled", True))
+
+    # --- bot messaging -----------------------------------------------------
+    def messages(self) -> dict[str, Any]:
+        """Editable bot message templates, merged over the shipped defaults."""
+        stored = self._storage.settings.read().get("messages") or {}
+        merged = dict(DEFAULT_MESSAGES)
+        if isinstance(stored, dict):
+            merged.update({k: v for k, v in stored.items() if isinstance(v, str)})
+        return merged
+
+    def notifications_config(self) -> dict[str, Any]:
+        """Notification switches: a master publish switch and per-type toggles."""
+        config = self._storage.settings.read().get("notifications") or {}
+        types = config.get("types") or {}
+        return {
+            "on_publish": bool(config.get("on_publish", True)),
+            "types": {
+                name: bool(types.get(name, True)) for name in NOTIFICATION_TYPES
+            },
+        }
+
+    def notify_type_enabled(self, type: str) -> bool:
+        return bool(self.notifications_config()["types"].get(type, True))

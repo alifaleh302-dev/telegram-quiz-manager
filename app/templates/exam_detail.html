@@ -12,6 +12,9 @@
   </button>
   {% endif %}
   {% if exam.status in ('published', 'scheduled') %}
+  <button class="btn btn-sm btn-outline-info" onclick="TQM.examAction('{{ exam.id }}','notify')">
+    <i class="bi bi-megaphone"></i> إشعار الطلاب
+  </button>
   <button class="btn btn-sm btn-warning" onclick="TQM.examAction('{{ exam.id }}','close')">
     <i class="bi bi-lock"></i> إغلاق
   </button>

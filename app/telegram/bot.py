@@ -12,6 +12,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
+from app.core.messages import render as render_message
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.services.secret_store import SecretStore
@@ -175,16 +176,15 @@ class BotManager:
             return ""
         return await self._resolve_mini_app_url(application)
 
+    def _welcome_text(self) -> str:
+        """The /start text: the admin-editable template, or the shipped default."""
+        settings = self._services.get("app_settings")
+        if settings is not None:
+            return render_message(settings.messages(), "welcome")
+        return render_message({}, "welcome")
+
     async def _cmd_start(self, update: Any, context: Any) -> None:
-        text = (
-            "🤖 *Telegram Quiz Manager*\n\n"
-            "هذا البوت ينشر اختبارات الاختيار من متعدد في القنوات المحددة.\n"
-            "ويمكنك الآن خوض الاختبارات التفاعلية من داخل تيليجرام.\n\n"
-            "الأوامر المتاحة:\n"
-            "/exams — فتح بوابة الاختبارات\n"
-            "/status — حالة النظام\n"
-            "/help — هذه الرسالة"
-        )
+        text = self._welcome_text()
         markup = None
         url = await self._mini_app_url()
         if url:

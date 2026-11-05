@@ -99,7 +99,9 @@ def build_services(settings: Settings) -> Services:
     students = StudentService(storage, audit)
     exams = ExamService(storage, audit, questions)
     attempts = ExamAttemptService(storage, audit, exams)
-    notifications = NotificationService(storage, audit, students, exams, transport)
+    notifications = NotificationService(
+        storage, audit, students, exams, transport, settings=app_settings
+    )
 
     runner = ScheduleRunner(
         questions=questions,
@@ -118,6 +120,7 @@ def build_services(settings: Settings) -> Services:
             "channels": channels,
             "publishing": publishing,
             "analytics": analytics,
+            "app_settings": app_settings,
         },
         secret_store=secrets,
     )
