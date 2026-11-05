@@ -324,7 +324,7 @@ const SA = (() => {
       }
     });
 
-    const wrap = el('<div></div>');
+    const wrap = el('<div class="sa-session"></div>');
     const top = el(`<div class="sa-card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span class="sa-note" id="saCounter"></span>

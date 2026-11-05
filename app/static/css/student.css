@@ -17,7 +17,8 @@
 body.student-app {
   margin: 0;
   min-height: 100vh;
-  padding-bottom: 72px;
+  /* Clears the fixed tab bar (~58px) plus the floating submit button above it. */
+  padding-bottom: 116px;
   background: var(--tg-bg);
   color: var(--tg-text);
   font-family: -apple-system, "Segoe UI", Tahoma, "Noto Kufi Arabic", sans-serif;
@@ -55,6 +56,10 @@ body.student-app {
 }
 
 .sa-view { padding: 16px; display: flex; flex-direction: column; gap: var(--sa-gap); }
+
+/* The session keeps the same vertical rhythm as .sa-view for its in-flow cards
+   while the submit button is fixed to the viewport corner. */
+.sa-session { display: flex; flex-direction: column; gap: var(--sa-gap); }
 
 .sa-alert {
   margin: 12px 16px 0;
@@ -176,15 +181,17 @@ body.student-app {
 }
 .sa-nav-hint i { color: var(--tg-link); }
 
-/* Submit sits in a sticky bar just above the tab bar, away from the answer
-   options so a tap meant for an option cannot land on it by accident. */
+/* Submit is a compact button pinned to the bottom-left corner, away from the
+   answer options so a tap meant for an option cannot land on it by accident. */
 .sa-submit-bar {
-  position: sticky; bottom: calc(58px + env(safe-area-inset-bottom));
-  z-index: 20; margin-top: 14px;
-  padding: 10px;
-  background: linear-gradient(to top, var(--tg-bg) 65%, transparent);
+  position: fixed; bottom: calc(70px + env(safe-area-inset-bottom));
+  left: 12px; right: auto; z-index: 25;
 }
 .sa-submit {
+  width: auto;
+  padding: 9px 14px;
+  font-size: 0.82rem;
+  border-radius: 999px;
   background: linear-gradient(135deg, #f97316, #dc2626);
   box-shadow: 0 8px 20px rgba(220, 38, 38, 0.35);
 }
