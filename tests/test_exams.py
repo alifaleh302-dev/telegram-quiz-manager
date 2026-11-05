@@ -536,8 +536,40 @@ def test_nav_shows_exam_section_for_admin(exam_client) -> None:
     assert "منصة الاختبارات" in page.text
 
 
-# --- bot Mini App URL resolution ------------------------------------------
+def test_resume_payload_reports_last_answered_question(exam_client) -> None:
+    """Reopening an in-progress attempt returns every saved answer, so the Mini
+    App can jump straight to the last question the student answered."""
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=3)
+    headers = _student_headers()
 
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.status_code == 200, started.text
+    payload = started.json()
+    attempt_id = payload["attempt"]["id"]
+    questions = payload["questions"]
+    # Nothing answered yet: every selected_option is null.
+    assert all(q["selected_option"] is None for q in questions)
+
+    # Answer the first two, leaving the third untouched.
+    for question, option in zip(questions[:2], (1, 2)):
+        saved = exam_client.post(
+            f"/api/student/attempts/{attempt_id}/answers",
+            json={"question_id": question["question_id"], "selected_option": option},
+            headers=headers,
+        )
+        assert saved.status_code == 200
+
+    resumed = exam_client.get(f"/api/student/attempts/{attempt_id}", headers=headers)
+    assert resumed.status_code == 200, resumed.text
+    rows = resumed.json()["questions"]
+    answered = [i for i, q in enumerate(rows) if q["selected_option"] is not None]
+    assert answered == [0, 1]
+    assert rows[1]["selected_option"] == 2
+    assert rows[2]["selected_option"] is None
+
+
+# --- bot Mini App URL resolution ------------------------------------------
 class _FakeMenuButton:
     def __init__(self, url: str = "") -> None:
         self.web_app = type("WA", (), {"url": url})()

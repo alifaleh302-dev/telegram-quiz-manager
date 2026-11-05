@@ -91,7 +91,7 @@ data/      # tqm.db (قاعدة بيانات SQLite واحدة: questions / chan
            #   student_exam_state / notifications / settings / users / secrets /
            #   audit_log) + backups/
 logs/      # app.log
-tests/     # 341 اختباراً
+tests/     # 342 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 examples/  # questions.sample.json (نموذج استيراد)
 ```
@@ -382,7 +382,7 @@ examples/  # questions.sample.json (نموذج استيراد)
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 341 اختباراً
+python -m pytest              # 342 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```

@@ -313,9 +313,16 @@ const SA = (() => {
   // --- session -------------------------------------------------------------
   function openSession(data) {
     const questions = data.questions;
-    let index = 0;
     const answers = {};
-    questions.forEach((q) => { if (q.selected_option !== null && q.selected_option !== undefined) answers[q.question_id] = q.selected_option; });
+    // Resume at the last question the student answered, so reopening a session
+    // lands where they stopped instead of at the first question.
+    let index = 0;
+    questions.forEach((q, i) => {
+      if (q.selected_option !== null && q.selected_option !== undefined) {
+        answers[q.question_id] = q.selected_option;
+        index = i;
+      }
+    });
 
     const wrap = el('<div></div>');
     const top = el(`<div class="sa-card">
@@ -324,6 +331,7 @@ const SA = (() => {
         <span class="sa-timer" id="saTimer"></span>
       </div>
       <div class="sa-progress"><div id="saBar" style="width:0%"></div></div>
+      <p class="sa-note" id="saResumeNote" hidden></p>
     </div>`);
     const body = el('<div class="sa-card"></div>');
     const nav = el(`<div class="sa-nav-row">
@@ -331,13 +339,26 @@ const SA = (() => {
       <button class="sa-btn" id="saNext">التالي</button>
     </div>`);
     const submitBtn = el('<button class="sa-btn" id="saSubmit" style="background:#ef4444">تسليم الاختبار</button>');
-    wrap.append(top, body, nav, submitBtn);
+    const sideNav = el(`<div class="sa-side-nav" id="saSideNav">
+      <div class="sa-side-zone sa-side-zone-prev" id="saZonePrev"></div>
+      <div class="sa-side-zone sa-side-zone-next" id="saZoneNext"></div>
+      <button class="sa-side-arrow sa-side-arrow-prev" id="saArrowPrev" aria-label="السؤال السابق"><i class="bi bi-chevron-right"></i></button>
+      <button class="sa-side-arrow sa-side-arrow-next" id="saArrowNext" aria-label="السؤال التالي"><i class="bi bi-chevron-left"></i></button>
+    </div>`);
+    wrap.append(top, body, nav, submitBtn, sideNav);
     setHeader(data.exam.title, 'قيد التنفيذ', false);
     render(wrap);
 
     const timerEl = document.getElementById('saTimer');
     const counterEl = document.getElementById('saCounter');
     const barEl = document.getElementById('saBar');
+    const sideNavEl = document.getElementById('saSideNav');
+    const resumeNote = document.getElementById('saResumeNote');
+    const answeredCount = Object.keys(answers).length;
+    if (answeredCount > 0 && index > 0) {
+      resumeNote.textContent = `تم استئناف جلستك من السؤال ${index + 1} (آخر سؤال أجبت عنه).`;
+      resumeNote.hidden = false;
+    }
 
     function paint() {
       const q = questions[index];
@@ -358,12 +379,42 @@ const SA = (() => {
         });
         body.appendChild(optionNode);
       });
-      document.getElementById('saPrev').disabled = index === 0;
-      document.getElementById('saNext').hidden = index === questions.length - 1;
+      const first = index === 0;
+      const last = index === questions.length - 1;
+      document.getElementById('saPrev').disabled = first;
+      document.getElementById('saNext').hidden = last;
+      sideNavEl.classList.toggle('hide-prev', first);
+      sideNavEl.classList.toggle('hide-next', last);
     }
 
-    document.getElementById('saPrev').addEventListener('click', () => { if (index > 0) { index -= 1; paint(); } });
-    document.getElementById('saNext').addEventListener('click', () => { if (index < questions.length - 1) { index += 1; paint(); } });
+    function move(delta) {
+      const next = index + delta;
+      if (next < 0 || next >= questions.length) return;
+      index = next;
+      paint();
+    }
+
+    // Edge arrows stay hidden until the student taps the side of the screen:
+    // the first tap reveals the arrow, a tap while revealed navigates.
+    function bindSideNav() {
+      let timer = null;
+      [['saZonePrev', 'revealed-prev', -1], ['saZoneNext', 'revealed-next', 1]].forEach(
+        ([zoneId, cls, delta]) => {
+          document.getElementById(zoneId).addEventListener('click', () => {
+            const revealed = sideNavEl.classList.contains(cls);
+            clearTimeout(timer);
+            sideNavEl.classList.remove('revealed-prev', 'revealed-next');
+            sideNavEl.classList.add(cls);
+            timer = setTimeout(() => sideNavEl.classList.remove(cls), 3000);
+            if (revealed) move(delta);
+          });
+        },
+      );
+    }
+
+    document.getElementById('saPrev').addEventListener('click', () => move(-1));
+    document.getElementById('saNext').addEventListener('click', () => move(1));
+    bindSideNav();
     document.getElementById('saSubmit').addEventListener('click', () => confirmSubmit(data.attempt.id, answers, questions));
     paint();
 
@@ -568,7 +619,9 @@ const SA = (() => {
     area.innerHTML = '';
     actions.forEach((action) => {
       const button = el(`<button class="sa-btn ${action.secondary ? 'secondary' : ''}">${esc(action.label)}</button>`);
-      button.addEventListener('click', action.onClick);
+      // A secondary action (cancel/close) may omit onClick; default to closing
+      // so the button is never wired to a missing handler.
+      button.addEventListener('click', action.onClick || closeModal);
       area.appendChild(button);
     });
     modal.hidden = false;

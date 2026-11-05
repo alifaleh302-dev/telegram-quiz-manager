@@ -171,6 +171,38 @@ body.student-app {
 
 .sa-nav-row { display: flex; gap: 10px; margin-top: 4px; }
 
+/* Edge navigation: tapping the middle of either side of the screen reveals a
+   chevron; tapping the chevron then moves to the previous/next question. The
+   hit zones stay narrow so they do not steal taps meant for the options. */
+.sa-side-nav { position: fixed; inset: 0; pointer-events: none; z-index: 15; }
+.sa-side-zone {
+  position: absolute; top: 26%; bottom: 26%; width: 26px;
+  pointer-events: auto; cursor: pointer;
+}
+.sa-side-zone-prev { right: 0; }
+.sa-side-zone-next { left: 0; }
+.sa-side-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%;
+  background: rgba(15, 22, 32, 0.75); color: #fff;
+  font-size: 1.35rem; line-height: 1;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity 0.18s ease, visibility 0.18s ease;
+}
+.sa-side-arrow-prev { right: 6px; }
+.sa-side-arrow-next { left: 6px; }
+.sa-side-nav.revealed-prev .sa-side-arrow-prev,
+.sa-side-nav.revealed-next .sa-side-arrow-next {
+  opacity: 1; visibility: visible; pointer-events: auto;
+}
+.sa-side-nav.hide-prev .sa-side-zone-prev,
+.sa-side-nav.hide-prev .sa-side-arrow-prev { display: none; }
+.sa-side-nav.hide-next .sa-side-zone-next,
+.sa-side-nav.hide-next .sa-side-arrow-next { display: none; }
+
 .sa-result-ring {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 20px;
