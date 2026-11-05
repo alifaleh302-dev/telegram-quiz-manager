@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = ""
+    # Public HTTPS URL of the Student Mini App (used for the bot's WebApp button
+    # and deep links). Empty => derive from the request's own origin.
+    mini_app_url: str = ""
+    # Reject Mini App initData older than this many seconds (0 disables the check).
+    telegram_auth_max_age: int = 24 * 60 * 60
     # Per-request timeout for Bot API calls. The library default (5s) is too
     # tight on slow links: a quiz can be delivered while we still time out
     # reading the reply, which makes a successful publish look like a failure.

@@ -91,6 +91,24 @@ class FakeTelegramClient:
     async def get_member_count(self, chat_id):
         return self.member_counts.get(chat_id)
 
+    async def send_message(self, chat_id, text, *, reply_markup=None, disable_web_page_preview=True):
+        self.attempts += 1
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            return self._failure(self.transient_failure)
+        if self.fail_with is not None:
+            return self._failure(self.fail_with)
+        self.next_message_id += 1
+        self.sent.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "message_id": self.next_message_id,
+                "channel_id": "",
+            }
+        )
+        return PublishResult(ok=True, message_id=self.next_message_id)
+
     async def test_channel(self, chat_id):
         return PublishResult(ok=True, message_id=1)
 

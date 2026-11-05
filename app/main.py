@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, channels, dashboard, publishing, questions, schedules, settings as settings_api
 from app.api import analytics, userbots, users
+from app.api import admin_exams, student
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
 from app.services.container import build_services
@@ -77,6 +78,10 @@ def create_app() -> FastAPI:
     app.include_router(userbots.router)
     app.include_router(users.router)
     app.include_router(settings_api.router)
+    app.include_router(admin_exams.router)
+    app.include_router(admin_exams.page_router)
+    app.include_router(student.router)
+    app.include_router(student.page_router)
 
     @app.exception_handler(ValidationError)
     async def _validation_handler(request: Request, exc: ValidationError) -> JSONResponse:

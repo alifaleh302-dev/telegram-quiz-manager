@@ -62,6 +62,15 @@ a { text-decoration: none; }
 .nav-item i { font-size: 1.05rem; }
 .nav-item:hover { background: var(--bg-panel-soft); color: var(--text-main); }
 .nav-item.active { background: var(--accent-soft); color: #c7d2fe; font-weight: 600; }
+.nav-section {
+  margin: 14px 8px 2px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #94a3b8);
+  opacity: 0.85;
+}
 
 .sidebar-footer { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; }
 .dry-run-badge, .live-badge {
@@ -384,3 +393,30 @@ tr[data-question-id] { cursor: context-menu; }
 /* Per-channel published badges in the question table */
 .q-channels { display: flex; flex-wrap: wrap; gap: 4px; }
 .q-channels .badge { font-weight: 500; }
+
+/* Exam platform — question picker (exam editor) */
+.q-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 460px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.q-pick-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, .16);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--bg-panel-soft, rgba(148, 163, 184, .05));
+}
+.q-pick-item:hover { border-color: var(--accent); }
+.q-pick-item .form-check-input { margin-top: 3px; flex: 0 0 auto; }
+.q-pick-body { display: flex; flex-direction: column; gap: 3px; }
+.exam-question-list { margin: 0; padding-inline-start: 20px; }
+.exam-question-list li { margin-bottom: 10px; }
+.exam-question-list .q-text { display: block; font-weight: 600; }
+.exam-question-list .q-correct { display: block; font-size: .82rem; color: var(--text-muted); }

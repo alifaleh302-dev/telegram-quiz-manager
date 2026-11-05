@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}{{ exam.title }} — {{ app_name }}{% endblock %}
+{% block page_title %}{{ exam.title }}{% endblock %}
+{% block page_subtitle %}تفاصيل الاختبار ونتائج الطلاب{% endblock %}
+
+{% block topbar_actions %}
+<div class="d-flex gap-2">
+  <a class="btn btn-sm btn-outline-light" href="/exams/{{ exam.id }}/edit"><i class="bi bi-pencil"></i> تعديل</a>
+  {% if exam.status == 'draft' %}
+  <button class="btn btn-sm btn-success" onclick="TQM.examAction('{{ exam.id }}','publish')">
+    <i class="bi bi-send"></i> نشر وإشعار الطلاب
+  </button>
+  {% endif %}
+  {% if exam.status in ('published', 'scheduled') %}
+  <button class="btn btn-sm btn-warning" onclick="TQM.examAction('{{ exam.id }}','close')">
+    <i class="bi bi-lock"></i> إغلاق
+  </button>
+  {% endif %}
+  {% if exam.status == 'closed' %}
+  <button class="btn btn-sm btn-info" onclick="TQM.examAction('{{ exam.id }}','reopen')">
+    <i class="bi bi-unlock"></i> إعادة فتح
+  </button>
+  {% endif %}
+  <a class="btn btn-sm btn-outline-secondary" href="/exams">رجوع</a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="stat-strip">
+  <span class="text-info"><strong>{{ stats.students_started }}</strong> طالب بدأ</span>
+  <span class="text-success"><strong>{{ stats.completed }}</strong> محاولة مكتملة</span>
+  <span><strong>{{ stats.average }}%</strong> المتوسط</span>
+  <span><strong>{{ stats.highest }}%</strong> الأعلى</span>
+  <span><strong>{{ stats.lowest }}%</strong> الأدنى</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-info-circle"></i> معلومات</h2></div>
+      <div class="panel-body">
+        <dl class="schedule-meta">
+          <div><dt>المعرّف</dt><dd><code>{{ exam.id }}</code></dd></div>
+          <div><dt>الحالة</dt><dd>{{ exam.status }} — {{ exam.effective_state }}</dd></div>
+          <div><dt>الإتاحة</dt><dd>{{ 'نافذة زمنية' if exam.access_mode == 'scheduled' else 'دائماً' }}</dd></div>
+          <div><dt>من</dt><dd>{{ exam.starts_at or '—' }}</dd></div>
+          <div><dt>إلى</dt><dd>{{ exam.ends_at or '—' }}</dd></div>
+          <div><dt>المدة</dt><dd>{{ exam.duration_minutes or 'بلا حد' }} {% if exam.duration_minutes %}دقيقة{% endif %}</dd></div>
+          <div><dt>المحاولات</dt><dd>{{ 'غير محدودة' if exam.max_attempts == 0 else exam.max_attempts }}</dd></div>
+          <div><dt>إصدار الأسئلة</dt><dd>V{{ exam.question_version }}</dd></div>
+          <div><dt>الأسئلة</dt><dd>{{ exam.question_count }}</dd></div>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-list-ol"></i> الأسئلة ({{ questions | length }})</h2></div>
+      <div class="panel-body">
+        <ol class="exam-question-list">
+          {% for q in questions %}
+          <li>
+            <span class="q-text">{{ q.question_snapshot }}</span>
+            <span class="q-correct"><i class="bi bi-check-circle-fill text-success"></i>
+              {{ q.options_snapshot[q.correct_answer_snapshot] }}</span>
+          </li>
+          {% else %}
+          <p class="empty-state">لا أسئلة مرتبطة.</p>
+          {% endfor %}
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header"><h2><i class="bi bi-people"></i> محاولات الطلاب ({{ attempts | length }})</h2></div>
+  <div class="panel-body">
+    {% if attempts %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>الطالب</th>
+            <th>المحاولة</th>
+            <th>الحالة</th>
+            <th>النتيجة</th>
+            <th>صحيحة/خاطئة</th>
+            <th>البدء</th>
+            <th>التسليم</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for attempt in attempts %}
+          <tr>
+            <td>{{ attempt.student.name if attempt.student else attempt.student_id }}</td>
+            <td>#{{ attempt.attempt_number }}</td>
+            <td>
+              {% set badges = {'in_progress':'info','submitted':'success','expired':'warning','abandoned':'secondary'} %}
+              <span class="badge text-bg-{{ badges.get(attempt.status, 'secondary') }}">{{ attempt.status }}</span>
+            </td>
+            <td>{{ attempt.percentage }}%</td>
+            <td>{{ attempt.correct_count }} / {{ attempt.wrong_count }}</td>
+            <td class="hint">{{ attempt.started_at }}</td>
+            <td class="hint">{{ attempt.submitted_at or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-4"><i class="bi bi-inbox"></i><br>لا توجد محاولات بعد.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

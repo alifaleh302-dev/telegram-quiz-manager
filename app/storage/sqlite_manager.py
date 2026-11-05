@@ -61,6 +61,17 @@ ROWS_TABLES: dict[str, str] = {
     "poll_results": "poll_results",
     "poll_answers": "poll_answers",
     "userbot_accounts": "userbot_accounts",
+    # Exam platform (students, exams, attempts). New collections are additive:
+    # their tables are created by ``_schema()`` on open, so no migration step is
+    # needed and the existing collections are untouched.
+    "students": "students",
+    "exams": "exams",
+    "exam_questions": "exam_questions",
+    "attempts": "attempts",
+    "attempt_answers": "attempt_answers",
+    "student_exam_state": "student_exam_state",
+    "notifications": "notifications",
+    "exam_admin_logs": "exam_admin_logs",
 }
 
 # The key of the list inside each collection's document.
@@ -73,6 +84,14 @@ ROWS_KEYS: dict[str, str] = {
     "poll_results": "results",
     "poll_answers": "answers",
     "userbot_accounts": "accounts",
+    "students": "students",
+    "exams": "exams",
+    "exam_questions": "exam_questions",
+    "attempts": "attempts",
+    "attempt_answers": "attempt_answers",
+    "student_exam_state": "states",
+    "notifications": "notifications",
+    "exam_admin_logs": "entries",
 }
 
 # The JSON file each collection used to live in, for one-time migration.
@@ -446,6 +465,32 @@ class Storage:
             self.db, "userbot_accounts", {"version": 1, "counter": 0, "accounts": []}
         )
 
+        # --- Exam platform -------------------------------------------------
+        self.students = SqliteStore(
+            self.db, "students", {"version": 1, "counter": 0, "students": []}
+        )
+        self.exams = SqliteStore(
+            self.db, "exams", {"version": 1, "counter": 0, "exams": []}
+        )
+        self.exam_questions = SqliteStore(
+            self.db, "exam_questions", {"version": 1, "counter": 0, "exam_questions": []}
+        )
+        self.attempts = SqliteStore(
+            self.db, "attempts", {"version": 1, "counter": 0, "attempts": []}
+        )
+        self.attempt_answers = SqliteStore(
+            self.db, "attempt_answers", {"version": 1, "counter": 0, "attempt_answers": []}
+        )
+        self.student_exam_state = SqliteStore(
+            self.db, "student_exam_state", {"version": 1, "counter": 0, "states": []}
+        )
+        self.notifications = SqliteStore(
+            self.db, "notifications", {"version": 1, "counter": 0, "notifications": []}
+        )
+        self.exam_admin_logs = SqliteStore(
+            self.db, "exam_admin_logs", {"version": 1, "counter": 0, "entries": []}
+        )
+
         self.migrate_from_json()
 
     def all_stores(self) -> dict[str, SqliteStore]:
@@ -461,6 +506,14 @@ class Storage:
             "poll_results": self.poll_results,
             "poll_answers": self.poll_answers,
             "userbot_accounts": self.userbot_accounts,
+            "students": self.students,
+            "exams": self.exams,
+            "exam_questions": self.exam_questions,
+            "attempts": self.attempts,
+            "attempt_answers": self.attempt_answers,
+            "student_exam_state": self.student_exam_state,
+            "notifications": self.notifications,
+            "exam_admin_logs": self.exam_admin_logs,
         }
 
     # --- one-time JSON migration -------------------------------------------

@@ -40,6 +40,21 @@
         <i class="bi bi-calendar2-week"></i> الجدولة
       </a>
       {% endif %}
+      {% if 'exams' in permissions %}
+      <div class="nav-section">منصة الاختبارات</div>
+      <a class="nav-item {{ 'active' if active_page == 'exams' }}" href="/exams">
+        <i class="bi bi-journal-check"></i> الاختبارات
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'students' }}" href="/students">
+        <i class="bi bi-mortarboard"></i> الطلاب
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'attempts' }}" href="/attempts">
+        <i class="bi bi-list-check"></i> المحاولات
+      </a>
+      <a class="nav-item {{ 'active' if active_page == 'exam-analytics' }}" href="/exam-analytics">
+        <i class="bi bi-graph-up"></i> تحليل الاختبارات
+      </a>
+      {% endif %}
       {% if is_admin %}
       <a class="nav-item {{ 'active' if active_page == 'history' }}" href="/history">
         <i class="bi bi-journal-text"></i> سجل النشر

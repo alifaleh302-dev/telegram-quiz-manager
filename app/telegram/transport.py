@@ -136,6 +136,17 @@ class TransportRouter:
     async def get_me(self) -> dict[str, Any] | None:
         return await self._bot.get_me()
 
+    async def send_message(
+        self, chat_id: str | int, text: str, *, reply_markup: Any = None
+    ) -> Any:
+        """Send a direct message to a user.
+
+        Notifications always go through the *bot*: a userbot messaging arbitrary
+        users would look like spam and risks the account, whereas the bot may
+        message anyone who has started a chat with it.
+        """
+        return await self._bot.send_message(chat_id, text, reply_markup=reply_markup)
+
     def reset(self) -> None:
         self._bot.reset()
 

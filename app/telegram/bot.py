@@ -58,12 +58,14 @@ class BotManager:
         application.add_handler(CommandHandler("start", self._cmd_start))
         application.add_handler(CommandHandler("help", self._cmd_start))
         application.add_handler(CommandHandler("status", self._cmd_status))
+        application.add_handler(CommandHandler("exams", self._cmd_start))
         application.add_handler(PollAnswerHandler(self._on_poll_answer))
         application.add_handler(PollHandler(self._on_poll))
 
         try:
             await application.initialize()
             await application.start()
+            await self._register_menu_button(application)
             if config.telegram_mode == "webhook" and config.telegram_webhook_url:
                 await application.bot.set_webhook(
                     url=config.telegram_webhook_url,
@@ -115,17 +117,62 @@ class BotManager:
             self._application = None
         self._token = ""
 
-    # --- commands ----------------------------------------------------------
+    # --- Mini App menu -----------------------------------------------------
+    async def _register_menu_button(self, application: Any) -> None:
+        """Point Telegram's menu button at the Student Mini App.
+
+        Best-effort: a bot whose owner has not configured a public URL should
+        still start and serve the dashboard, so any failure is only logged.
+        """
+        from app.core.config import get_settings
+
+        base = (get_settings().mini_app_url or "").strip().rstrip("/")
+        if not base.startswith("https://"):
+            logger.info("mini_app_url not set (https); skipping Mini App menu button.")
+            return
+        url = f"{base}/app"
+        try:
+            from telegram import MenuButtonWebApp, WebAppInfo
+
+            await application.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="اختباراتي", web_app=WebAppInfo(url=url))
+            )
+            logger.info("Telegram menu button set to %s", url)
+        except Exception:  # noqa: BLE001 - never block startup on this
+            logger.exception("failed to set the Mini App menu button")
+
+    async def _mini_app_url(self) -> str:
+        from app.core.config import get_settings
+
+        base = (get_settings().mini_app_url or "").strip().rstrip("/")
+        if base.startswith("https://"):
+            return f"{base}/app"
+        return ""
+
     async def _cmd_start(self, update: Any, context: Any) -> None:
         text = (
             "🤖 *Telegram Quiz Manager*\n\n"
             "هذا البوت ينشر اختبارات الاختيار من متعدد في القنوات المحددة.\n"
-            "التحكم الكامل يتم من لوحة الويب الخاصة بالإدارة.\n\n"
+            "ويمكنك الآن خوض الاختبارات التفاعلية من داخل تيليجرام.\n\n"
             "الأوامر المتاحة:\n"
+            "/exams — فتح بوابة الاختبارات\n"
             "/status — حالة النظام\n"
             "/help — هذه الرسالة"
         )
-        await update.effective_message.reply_text(text, parse_mode="Markdown")
+        markup = None
+        url = await self._mini_app_url()
+        if url:
+            try:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+
+                markup = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("فتح الاختبارات", web_app=WebAppInfo(url=url))]]
+                )
+            except Exception:  # noqa: BLE001 - button is a nicety, not required
+                markup = None
+        await update.effective_message.reply_text(
+            text, parse_mode="Markdown", reply_markup=markup
+        )
 
     async def _cmd_status(self, update: Any, context: Any) -> None:
         questions = self._services["questions"].stats()

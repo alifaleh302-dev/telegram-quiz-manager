@@ -1320,6 +1320,111 @@ const TQM = (() => {
     body.innerHTML = html;
   }
 
+  // --- exam platform (admin) ----------------------------------------------
+  async function examAction(examId, action) {
+    if (action === 'delete' && !confirm(`حذف الاختبار ${examId}؟ لا يمكن التراجع.`)) return;
+    const labels = { publish: 'نشر الاختبار', close: 'إغلاق الاختبار', reopen: 'إعادة فتح الاختبار', archive: 'أرشفة الاختبار', delete: 'حذف الاختبار' };
+    const result = await api(`/api/admin/exams/${examId}/${action}`, { method: action === 'delete' ? 'DELETE' : 'POST' });
+    if (result.ok) {
+      toast(`${labels[action] || action}: تم بنجاح`);
+      setTimeout(() => window.location.reload(), 700);
+    } else {
+      toast(result.error, 'error');
+    }
+  }
+
+  function initExamForm() {
+    const form = document.getElementById('examForm');
+    if (!form) return;
+    const accessMode = document.getElementById('accessMode');
+    const window_box = document.getElementById('scheduleWindow');
+    const syncWindow = () => { window_box.hidden = accessMode.value !== 'scheduled'; };
+    accessMode?.addEventListener('change', syncWindow);
+    syncWindow();
+
+    // Question picker: live search/category filter and selection counter.
+    const search = document.getElementById('qPickerSearch');
+    const category = document.getElementById('qPickerCategory');
+    const items = () => Array.from(document.querySelectorAll('.q-pick-item'));
+    const applyFilter = () => {
+      const text = (search?.value || '').trim().toLowerCase();
+      const cat = category?.value || '';
+      items().forEach((item) => {
+        const matchesText = !text || (item.dataset.text || '').includes(text);
+        const matchesCat = !cat || item.dataset.category === cat;
+        item.hidden = !(matchesText && matchesCat);
+      });
+    };
+    search?.addEventListener('input', applyFilter);
+    category?.addEventListener('change', applyFilter);
+
+    const checks = () => Array.from(document.querySelectorAll('.exam-q-check'));
+    const updateCount = () => {
+      const count = checks().filter((c) => c.checked).length;
+      const label = document.getElementById('selectedCount');
+      if (label) label.textContent = count;
+    };
+    document.addEventListener('change', (event) => {
+      if (event.target.classList?.contains('exam-q-check')) updateCount();
+    });
+    updateCount();
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const ids = checks().filter((c) => c.checked).map((c) => c.value);
+      if (!ids.length) { toast('اختر سؤالاً واحداً على الأقل.', 'error'); return; }
+      const data = new FormData(form);
+      const payload = {
+        title: data.get('title') || '',
+        description: data.get('description') || '',
+        category: data.get('category') || 'General',
+        cover_image: data.get('cover_image') || '',
+        access_mode: data.get('access_mode') || 'always',
+        start_date: data.get('start_date') || '',
+        start_time: data.get('start_time') || '',
+        end_date: data.get('end_date') || '',
+        end_time: data.get('end_time') || '',
+        timezone: data.get('timezone') || 'Asia/Riyadh',
+        duration_minutes: Number(data.get('duration_minutes') || 0),
+        max_attempts: Number(data.get('max_attempts') || 0),
+        status: data.get('status') || 'draft',
+        allow_retake: data.get('allow_retake') === 'on',
+        count_abandoned_attempts: data.get('count_abandoned_attempts') === 'on',
+        shuffle_questions: data.get('shuffle_questions') === 'on',
+        shuffle_options: data.get('shuffle_options') === 'on',
+        show_results: data.get('show_results') === 'on',
+        show_solutions_after_submit: data.get('show_solutions_after_submit') === 'on',
+        question_ids: ids,
+      };
+      const examId = form.dataset.examId;
+      const url = examId ? `/api/admin/exams/${examId}` : '/api/admin/exams';
+      const result = await api(url, { method: examId ? 'PUT' : 'POST', body: payload });
+      if (result.ok) {
+        toast('تم الحفظ بنجاح');
+        setTimeout(() => { window.location.href = `/exams/${result.data.id}`; }, 600);
+      } else {
+        toast(result.error, 'error');
+      }
+    });
+  }
+
+  function selectAllVisible() {
+    document.querySelectorAll('.q-pick-item').forEach((item) => {
+      if (!item.hidden) {
+        const check = item.querySelector('.exam-q-check');
+        if (check) check.checked = true;
+      }
+    });
+    const label = document.getElementById('selectedCount');
+    if (label) label.textContent = document.querySelectorAll('.exam-q-check:checked').length;
+  }
+
+  function clearExamQuestions() {
+    document.querySelectorAll('.exam-q-check').forEach((c) => { c.checked = false; });
+    const label = document.getElementById('selectedCount');
+    if (label) label.textContent = '0';
+  }
+
   return {
     api, toast, quickAction, publishNow, previewQuestion, duplicateQuestion, deleteQuestion,
     bulk, initQuestionTable, initImportForm, initEditor,
@@ -1332,5 +1437,6 @@ const TQM = (() => {
     initUsersPage, showUserForm, editUser, deleteUser, resetUserPassword,
     userbotForm, showUserbotForm, hideUserbotForm, toggleUserbot, setDefaultUserbot,
     deleteUserbot, userbotLoginBox, testUserbot,
+    examAction, initExamForm, selectAllVisible, clearExamQuestions,
   };
 })();

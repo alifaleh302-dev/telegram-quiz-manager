@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>اختباراتي</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/static/css/student.css" rel="stylesheet">
+</head>
+<body class="student-app">
+  <header class="sa-header">
+    <button class="sa-back" id="saBack" hidden aria-label="رجوع">
+      <i class="bi bi-chevron-right"></i>
+    </button>
+    <div class="sa-head-text">
+      <h1 id="saTitle">اختباراتي</h1>
+      <p id="saSubtitle">بوابة الطالب</p>
+    </div>
+    <button class="sa-icon-btn" id="saBell" aria-label="الإشعارات">
+      <i class="bi bi-bell"></i>
+      <span class="sa-badge" id="saBellBadge" hidden>0</span>
+    </button>
+  </header>
+
+  <div id="saAlert" class="sa-alert" hidden></div>
+
+  <main id="saView" class="sa-view">
+    <div class="sa-loading"><div class="spinner-border text-primary" role="status"></div></div>
+  </main>
+
+  <nav class="sa-tabs" id="saTabs">
+    <button data-tab="home" class="active"><i class="bi bi-house-door"></i><span>الرئيسية</span></button>
+    <button data-tab="exams"><i class="bi bi-journal-check"></i><span>الاختبارات</span></button>
+    <button data-tab="results"><i class="bi bi-trophy"></i><span>نتائجي</span></button>
+    <button data-tab="notifications"><i class="bi bi-bell"></i><span>التنبيهات</span></button>
+    <button data-tab="profile"><i class="bi bi-person-circle"></i><span>حسابي</span></button>
+  </nav>
+
+  <div class="sa-modal" id="saModal" hidden>
+    <div class="sa-modal-card">
+      <h3 id="saModalTitle"></h3>
+      <div id="saModalBody"></div>
+      <div class="sa-modal-actions" id="saModalActions"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/js/student.js"></script>
+</body>
+</html>

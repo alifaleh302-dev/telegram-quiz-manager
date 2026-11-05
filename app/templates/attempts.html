@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}المحاولات — {{ app_name }}{% endblock %}
+{% block page_title %}محاولات الطلاب{% endblock %}
+{% block page_subtitle %}كل محاولات الاختبارات مع النتائج والحالات{% endblock %}
+
+{% block content %}
+<div class="panel">
+  <div class="panel-body">
+    <form class="filter-bar" method="get" action="/attempts">
+      <div class="filter-search">
+        <i class="bi bi-search"></i>
+        <input class="form-control" name="search" placeholder="ابحث بمعرّف الاختبار أو الطالب أو المحاولة..." value="{{ filters.search }}">
+      </div>
+      <select class="form-select" name="status">
+        <option value="">كل الحالات</option>
+        <option value="in_progress" {{ 'selected' if filters.status == 'in_progress' }}>قيد التنفيذ</option>
+        <option value="submitted" {{ 'selected' if filters.status == 'submitted' }}>مُسلَّمة</option>
+        <option value="expired" {{ 'selected' if filters.status == 'expired' }}>منتهية بالوقت</option>
+        <option value="abandoned" {{ 'selected' if filters.status == 'abandoned' }}>مهجورة</option>
+      </select>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تصفية</button>
+      <a class="btn btn-outline-secondary" href="/attempts">إعادة تعيين</a>
+    </form>
+
+    {% if attempts %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>المحاولة</th>
+            <th>الطالب</th>
+            <th>الاختبار</th>
+            <th>الحالة</th>
+            <th>النتيجة</th>
+            <th>البدء</th>
+            <th>التسليم</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for attempt in attempts %}
+          <tr>
+            <td><code>{{ attempt.id }}</code> <span class="hint">#{{ attempt.attempt_number }}</span></td>
+            <td>{{ attempt.student.name if attempt.student else attempt.student_id }}</td>
+            <td><a href="/exams/{{ attempt.exam_id }}">{{ attempt.exam_title }}</a></td>
+            <td>
+              {% set badges = {'in_progress':'info','submitted':'success','expired':'warning','abandoned':'secondary'} %}
+              {% set labels = {'in_progress':'قيد التنفيذ','submitted':'مُسلَّمة','expired':'منتهية بالوقت','abandoned':'مهجورة'} %}
+              <span class="badge text-bg-{{ badges.get(attempt.status, 'secondary') }}">{{ labels.get(attempt.status, attempt.status) }}</span>
+            </td>
+            <td>{{ attempt.percentage }}% <span class="hint">({{ attempt.correct_count }}/{{ attempt.correct_count + attempt.wrong_count + attempt.unanswered_count }})</span></td>
+            <td class="hint">{{ attempt.started_at }}</td>
+            <td class="hint">{{ attempt.submitted_at or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5"><i class="bi bi-inbox"></i><br>لا توجد محاولات مطابقة.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -9,12 +9,28 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.timezones import is_valid_timezone
+from app.core.timezones import is_valid_timezone, safe_timezone
 
 DIFFICULTIES = ("easy", "medium", "hard")
 QUESTION_STATUSES = ("draft", "ready", "published")
 SCHEDULE_TYPES = ("daily", "times", "weekdays", "interval", "once", "manual")
 SELECTION_MODES = ("sequential", "random", "category")
+
+# --- Exam platform ---------------------------------------------------------
+EXAM_STATUSES = ("draft", "scheduled", "published", "closed", "archived")
+EXAM_ACCESS_MODES = ("always", "scheduled")
+ATTEMPT_STATUSES = ("in_progress", "submitted", "expired", "abandoned")
+NOTIFICATION_TYPES = (
+    "exam_published",
+    "exam_upcoming",
+    "exam_closing_soon",
+    "attempt_completed",
+    "result_available",
+)
+# ``0`` means unlimited attempts.
+MAX_ATTEMPTS_CAP = 100
+MAX_EXAM_QUESTIONS = 200
+MAX_DURATION_MINUTES = 600
 
 MIN_OPTIONS = 2
 MAX_OPTIONS = 10
@@ -277,3 +293,126 @@ def normalize_imported_question(raw: dict[str, Any]) -> dict[str, Any]:
 
 def now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# --- Exam platform ---------------------------------------------------------
+
+def _parse_date(value: Any, field: str) -> str:
+    text = _clean_text(value, field, max_length=10, required=False)
+    if not text:
+        return ""
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValidationError(f"{field} يجب أن يكون بصيغة YYYY-MM-DD.") from exc
+    return text
+
+
+def combine_local_to_utc(date_value: Any, time_value: Any, timezone: str) -> str:
+    """Combine a local date + time in ``timezone`` into a UTC ISO-8601 string.
+
+    Server-side only: the browser never computes the instant, so the exam
+    window cannot be shifted by a tampered client clock.
+    """
+    date_text = _parse_date(date_value, "التاريخ")
+    if not date_text:
+        return ""
+    time_text = _parse_time(time_value or "00:00")
+    zone = safe_timezone(timezone)
+    local = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M").replace(
+        tzinfo=zone
+    )
+    return local.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def validate_exam_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    title = _clean_text(payload.get("title"), "عنوان الاختبار", max_length=200)
+    access_mode = str(payload.get("access_mode") or "always").strip().lower()
+    if access_mode not in EXAM_ACCESS_MODES:
+        raise ValidationError("نمط الإتاحة يجب أن يكون always أو scheduled.")
+
+    timezone = _clean_text(
+        payload.get("timezone"), "المنطقة الزمنية", max_length=64, required=False
+    )
+    if timezone and not is_valid_timezone(timezone):
+        raise ValidationError(f"المنطقة الزمنية «{timezone}» غير معروفة.")
+
+    # Accept either a pre-combined ISO instant (``starts_at``) or the separate
+    # date/time fields the admin form posts.
+    starts_at = _clean_text(
+        payload.get("starts_at"), "بداية الإتاحة", max_length=40, required=False
+    )
+    ends_at = _clean_text(
+        payload.get("ends_at"), "نهاية الإتاحة", max_length=40, required=False
+    )
+    if not starts_at and payload.get("start_date"):
+        starts_at = combine_local_to_utc(
+            payload.get("start_date"), payload.get("start_time"), timezone
+        )
+    if not ends_at and payload.get("end_date"):
+        ends_at = combine_local_to_utc(
+            payload.get("end_date"), payload.get("end_time"), timezone
+        )
+    for label, value in (("بداية الإتاحة", starts_at), ("نهاية الإتاحة", ends_at)):
+        if value:
+            try:
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValidationError(f"{label} ليست تاريخاً صالحاً.") from exc
+
+    if access_mode == "scheduled":
+        if not starts_at:
+            raise ValidationError("الاختبار المجدول يتطلب تاريخ بداية.")
+        if ends_at and starts_at >= ends_at:
+            raise ValidationError("بداية الإتاحة يجب أن تسبق نهايتها.")
+
+    try:
+        duration = int(payload.get("duration_minutes") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("مدة الاختبار غير صالحة.") from exc
+    if not 0 <= duration <= MAX_DURATION_MINUTES:
+        raise ValidationError(
+            f"مدة الاختبار يجب أن تكون بين 0 و {MAX_DURATION_MINUTES} دقيقة (0 = بلا حد)."
+        )
+
+    try:
+        max_attempts = int(payload.get("max_attempts") if payload.get("max_attempts") not in (None, "") else 1)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("عدد المحاولات غير صالح.") from exc
+    if not 0 <= max_attempts <= MAX_ATTEMPTS_CAP:
+        raise ValidationError(
+            f"عدد المحاولات يجب أن يكون بين 0 و {MAX_ATTEMPTS_CAP} (0 = غير محدود)."
+        )
+
+    status = str(payload.get("status") or "draft").strip().lower()
+    if status not in EXAM_STATUSES:
+        raise ValidationError("حالة الاختبار غير معروفة.")
+
+    return {
+        "title": title,
+        "description": _clean_text(
+            payload.get("description"), "الوصف", max_length=2000, required=False
+        ),
+        "category": _clean_text(
+            payload.get("category"), "التصنيف", max_length=60, required=False
+        )
+        or "General",
+        "cover_image": _clean_text(
+            payload.get("cover_image"), "صورة الغلاف", max_length=500, required=False
+        ),
+        "access_mode": access_mode,
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+        "timezone": timezone or "Asia/Riyadh",
+        "duration_minutes": duration,
+        "max_attempts": max_attempts,
+        "allow_retake": bool(payload.get("allow_retake", True)),
+        "count_abandoned_attempts": bool(payload.get("count_abandoned_attempts", True)),
+        "shuffle_questions": bool(payload.get("shuffle_questions", False)),
+        "shuffle_options": bool(payload.get("shuffle_options", False)),
+        "show_results": bool(payload.get("show_results", True)),
+        "show_solutions_after_submit": bool(
+            payload.get("show_solutions_after_submit", True)
+        ),
+        "status": status,
+    }

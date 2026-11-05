@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}الاختبارات — {{ app_name }}{% endblock %}
+{% block page_title %}الاختبارات{% endblock %}
+{% block page_subtitle %}أنشئ اختبارات تفاعلية من بنك الأسئلة وانشرها للطلاب{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-sm btn-primary" href="/exams/new">
+  <i class="bi bi-plus-lg"></i> اختبار جديد
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="stat-strip">
+  <span><strong>{{ totals.all }}</strong> إجمالي الاختبارات</span>
+  <span class="text-success"><strong>{{ totals.published }}</strong> منشور</span>
+  <span class="text-secondary"><strong>{{ totals.draft }}</strong> مسودة</span>
+  <span class="text-info"><strong>{{ totals.students }}</strong> طالب مسجّل</span>
+</div>
+
+<div class="panel">
+  <div class="panel-body">
+    <form class="filter-bar" method="get" action="/exams">
+      <div class="filter-search">
+        <i class="bi bi-search"></i>
+        <input class="form-control" name="search" placeholder="ابحث بعنوان الاختبار..." value="{{ filters.search }}">
+      </div>
+      <select class="form-select" name="status">
+        <option value="">كل الحالات</option>
+        <option value="draft" {{ 'selected' if filters.status == 'draft' }}>مسودة</option>
+        <option value="scheduled" {{ 'selected' if filters.status == 'scheduled' }}>مجدول</option>
+        <option value="published" {{ 'selected' if filters.status == 'published' }}>منشور</option>
+        <option value="closed" {{ 'selected' if filters.status == 'closed' }}>مغلق</option>
+        <option value="archived" {{ 'selected' if filters.status == 'archived' }}>مؤرشف</option>
+      </select>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تصفية</button>
+      <a class="btn btn-outline-secondary" href="/exams">إعادة تعيين</a>
+    </form>
+
+    {% if exams %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>المعرّف</th>
+            <th>العنوان</th>
+            <th>الحالة</th>
+            <th>الأسئلة</th>
+            <th>المحاولات</th>
+            <th>المتوسط</th>
+            <th class="text-end">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for exam in exams %}
+          <tr data-id="{{ exam.id }}">
+            <td><code>{{ exam.id }}</code></td>
+            <td>
+              <a href="/exams/{{ exam.id }}" class="q-text">{{ exam.title }}</a>
+              <span class="q-correct text-secondary">{{ exam.category }}</span>
+            </td>
+            <td>
+              {% set status_labels = {'draft':'مسودة','scheduled':'مجدول','published':'منشور','closed':'مغلق','archived':'مؤرشف'} %}
+              {% set badge = {'draft':'secondary','scheduled':'warning','published':'success','closed':'dark','archived':'secondary'} %}
+              <span class="badge text-bg-{{ badge.get(exam.status, 'secondary') }}">{{ status_labels.get(exam.status, exam.status) }}</span>
+            </td>
+            <td>{{ exam.question_count }}</td>
+            <td>{{ exam.stats.attempts }} <span class="hint">({{ exam.stats.completed }} مكتملة)</span></td>
+            <td>{{ exam.stats.average }}%</td>
+            <td class="text-end">
+              <div class="btn-group btn-group-sm">
+                <a class="btn btn-outline-light" href="/exams/{{ exam.id }}"><i class="bi bi-eye"></i></a>
+                <a class="btn btn-outline-light" href="/exams/{{ exam.id }}/edit"><i class="bi bi-pencil"></i></a>
+                {% if exam.status in ('draft',) %}
+                <button class="btn btn-outline-success" onclick="TQM.examAction('{{ exam.id }}','publish')" title="نشر">
+                  <i class="bi bi-send"></i>
+                </button>
+                {% endif %}
+                {% if exam.status in ('published', 'scheduled') %}
+                <button class="btn btn-outline-warning" onclick="TQM.examAction('{{ exam.id }}','close')" title="إغلاق">
+                  <i class="bi bi-lock"></i>
+                </button>
+                {% endif %}
+                {% if exam.status == 'closed' %}
+                <button class="btn btn-outline-info" onclick="TQM.examAction('{{ exam.id }}','reopen')" title="إعادة فتح">
+                  <i class="bi bi-unlock"></i>
+                </button>
+                {% endif %}
+                {% if exam.stats.attempts == 0 %}
+                <button class="btn btn-outline-danger" onclick="TQM.examAction('{{ exam.id }}','delete')" title="حذف">
+                  <i class="bi bi-trash"></i>
+                </button>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-journal-x"></i><br>
+      لا توجد اختبارات بعد. أنشئ اختباراً واختر أسئلته من بنك الأسئلة.
+    </p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

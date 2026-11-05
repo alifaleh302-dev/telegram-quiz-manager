@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}الطلاب — {{ app_name }}{% endblock %}
+{% block page_title %}الطلاب{% endblock %}
+{% block page_subtitle %}الطلاب المسجّلون عبر تطبيق تيليجرام المصغّر{% endblock %}
+
+{% block content %}
+<div class="panel">
+  <div class="panel-body">
+    <form class="filter-bar" method="get" action="/students">
+      <div class="filter-search">
+        <i class="bi bi-search"></i>
+        <input class="form-control" name="search" placeholder="ابحث بالاسم أو المستخدم أو المعرّف..." value="{{ search }}">
+      </div>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تصفية</button>
+      <a class="btn btn-outline-secondary" href="/students">إعادة تعيين</a>
+    </form>
+
+    {% if students %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th>المعرّف</th>
+            <th>الاسم</th>
+            <th>تيليجرام</th>
+            <th>المحاولات</th>
+            <th>المكتملة</th>
+            <th>المتوسط</th>
+            <th>آخر ظهور</th>
+            <th>التنبيهات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for student in students %}
+          <tr>
+            <td><code>{{ student.id }}</code></td>
+            <td>{{ student.name }}</td>
+            <td class="hint">{{ '@' ~ student.username if student.username else student.telegram_user_id }}</td>
+            <td>{{ student.attempts }}</td>
+            <td>{{ student.completed }}</td>
+            <td>{{ student.average }}%</td>
+            <td class="hint">{{ student.last_seen_at }}</td>
+            <td>
+              {% if student.notifications_enabled %}
+              <span class="badge text-bg-success">مفعّلة</span>
+              {% else %}
+              <span class="badge text-bg-secondary">معطّلة</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state py-5">
+      <i class="bi bi-people"></i><br>
+      لا يوجد طلاب مسجّلون بعد. يظهر الطالب هنا تلقائياً عند أول فتح للتطبيق المصغّر.
+    </p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

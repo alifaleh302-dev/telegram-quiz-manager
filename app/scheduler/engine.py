@@ -20,6 +20,9 @@ logger = get_logger(__name__)
 
 JOB_PREFIX = "schedule:"
 ANALYTICS_JOB_ID = "analytics:auto-collect"
+# Exam platform: close timed-out attempts and deliver pending notifications.
+EXAM_SWEEP_JOB_ID = "exam:sweep-attempts"
+NOTIFY_JOB_ID = "exam:dispatch-notifications"
 
 
 class SchedulerEngine:
@@ -32,12 +35,16 @@ class SchedulerEngine:
         analytics: Any | None = None,
         settings: Any | None = None,
         telegram: Any | None = None,
+        attempts: Any | None = None,
+        notifications: Any | None = None,
     ) -> None:
         self._runner = runner
         self._schedules = schedules
         self._analytics = analytics
         self._settings = settings
         self._telegram = telegram
+        self._attempts = attempts
+        self._notifications = notifications
         self._scheduler = AsyncIOScheduler(timezone="UTC")
         self._started = False
 
@@ -69,6 +76,7 @@ class SchedulerEngine:
                     "skipping schedule %s: could not build a trigger", schedule.get("id")
                 )
         self._schedule_analytics()
+        self._schedule_exam_jobs()
         logger.info("scheduler loaded %s active job(s)", count)
         return count
 
@@ -94,6 +102,49 @@ class SchedulerEngine:
             await self._analytics.collect(self._telegram, trigger="auto")
         except Exception:  # noqa: BLE001 - a failing job must not kill the scheduler
             logger.exception("automatic analytics collection failed")
+
+    def _schedule_exam_jobs(self) -> None:
+        """Register the exam maintenance jobs (attempt sweep + notifications).
+
+        Both are registered whenever the services exist: the sweep closes timed
+        out attempts (so a student is not left "in progress" forever), and the
+        dispatch delivers any pending notification. Both are cheap when there is
+        nothing to do.
+        """
+        if self._attempts is not None:
+            self._scheduler.add_job(
+                self._sweep_attempts,
+                trigger=IntervalTrigger(minutes=5),
+                id=EXAM_SWEEP_JOB_ID,
+                name="إغلاق المحاولات المنتهية",
+                replace_existing=True,
+                max_instances=1,
+            )
+        if self._notifications is not None:
+            self._scheduler.add_job(
+                self._dispatch_notifications,
+                trigger=IntervalTrigger(minutes=2),
+                id=NOTIFY_JOB_ID,
+                name="إرسال تنبيهات الطلاب",
+                replace_existing=True,
+                max_instances=1,
+            )
+
+    async def _sweep_attempts(self) -> None:
+        try:
+            closed = self._attempts.sweep_expired()
+            if closed:
+                logger.info("closed %s expired exam attempt(s)", closed)
+        except Exception:  # noqa: BLE001 - a failing job must not kill the scheduler
+            logger.exception("exam attempt sweep failed")
+
+    async def _dispatch_notifications(self) -> None:
+        try:
+            summary = await self._notifications.dispatch()
+            if summary.get("sent") or summary.get("failed"):
+                logger.info("notification dispatch: %s", summary)
+        except Exception:  # noqa: BLE001
+            logger.exception("notification dispatch failed")
 
     def _add_schedule(self, schedule: dict[str, Any]) -> bool:
         if not schedule.get("enabled", True):

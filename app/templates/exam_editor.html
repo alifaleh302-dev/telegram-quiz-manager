@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}{{ 'تعديل اختبار' if mode == 'edit' else 'اختبار جديد' }} — {{ app_name }}{% endblock %}
+{% block page_title %}{{ 'تعديل الاختبار' if mode == 'edit' else 'اختبار جديد' }}{% endblock %}
+{% block page_subtitle %}اختر الأسئلة من البنك وحدّد قواعد الإتاحة والمحاولات{% endblock %}
+
+{% block content %}
+<form id="examForm" class="row g-3" data-mode="{{ mode }}"
+      data-exam-id="{{ exam.id if exam else '' }}">
+  <div class="col-lg-8">
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-info-circle"></i> معلومات الاختبار</h2></div>
+      <div class="panel-body row g-3">
+        <div class="col-md-8">
+          <label class="form-label">عنوان الاختبار <span class="req">*</span></label>
+          <input class="form-control" name="title" maxlength="200" required
+                 value="{{ exam.title if exam else '' }}" placeholder="اختبار أساسيات الشبكات">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">التصنيف</label>
+          <input class="form-control" name="category" list="examCategories"
+                 value="{{ exam.category if exam else 'General' }}">
+          <datalist id="examCategories">
+            {% for category in categories %}<option value="{{ category }}">{% endfor %}
+          </datalist>
+        </div>
+        <div class="col-12">
+          <label class="form-label">الوصف</label>
+          <textarea class="form-control" name="description" rows="3" maxlength="2000"
+                    placeholder="شرح مختصر يظهر للطالب قبل البدء">{{ exam.description if exam else '' }}</textarea>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">صورة الغلاف <span class="hint">(رابط اختياري)</span></label>
+          <input class="form-control" name="cover_image" value="{{ exam.cover_image if exam else '' }}">
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-ui-checks"></i> أسئلة الاختبار</h2></div>
+      <div class="panel-body">
+        <div class="filter-bar mb-3">
+          <div class="filter-search">
+            <i class="bi bi-search"></i>
+            <input class="form-control" id="qPickerSearch" placeholder="ابحث في بنك الأسئلة...">
+          </div>
+          <select class="form-select" id="qPickerCategory">
+            <option value="">كل التصنيفات</option>
+            {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-outline-light" type="button" onclick="TQM.selectAllVisible()">تحديد الظاهر</button>
+          <button class="btn btn-outline-secondary" type="button" onclick="TQM.clearExamQuestions()">مسح التحديد</button>
+        </div>
+        <div class="q-picker" id="qPicker">
+          {% for question in questions %}
+          <label class="q-pick-item" data-category="{{ question.category }}"
+                 data-text="{{ (question.question ~ ' ' ~ question.id) | lower }}">
+            <input type="checkbox" class="form-check-input exam-q-check" value="{{ question.id }}"
+                   {{ 'checked' if question.id in selected_ids }}>
+            <span class="q-pick-body">
+              <span class="q-text">{{ question.question }}</span>
+              <span class="q-correct">
+                <i class="bi bi-check-circle-fill text-success"></i> {{ question.options[question.correct_option_id] }}
+                <span class="badge text-bg-dark ms-2">{{ question.category }}</span>
+              </span>
+            </span>
+          </label>
+          {% else %}
+          <p class="empty-state">لا توجد أسئلة في البنك. أضف أسئلة أولاً من بنك الأسئلة.</p>
+          {% endfor %}
+        </div>
+        <p class="form-text mt-2">المحدد: <strong id="selectedCount">0</strong> سؤال.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-sliders"></i> الإتاحة والمحاولات</h2></div>
+      <div class="panel-body row g-3">
+        <div class="col-12">
+          <label class="form-label">حالة الاختبار</label>
+          {% set current_status = exam.status if exam else 'draft' %}
+          <select class="form-select" name="status">
+            <option value="draft" {{ 'selected' if current_status == 'draft' }}>مسودة</option>
+            <option value="published" {{ 'selected' if current_status == 'published' }}>منشور</option>
+            <option value="closed" {{ 'selected' if current_status == 'closed' }}>مغلق</option>
+            <option value="archived" {{ 'selected' if current_status == 'archived' }}>مؤرشف</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">نمط الإتاحة</label>
+          {% set access = exam.access_mode if exam else 'always' %}
+          <select class="form-select" name="access_mode" id="accessMode">
+            <option value="always" {{ 'selected' if access == 'always' }}>متاح دائماً</option>
+            <option value="scheduled" {{ 'selected' if access == 'scheduled' }}>نافذة زمنية محددة</option>
+          </select>
+        </div>
+        <div class="col-12" id="scheduleWindow" hidden>
+          <label class="form-label">بداية الإتاحة</label>
+          <div class="d-flex gap-2">
+            <input class="form-control" type="date" name="start_date" id="startDate">
+            <input class="form-control" type="time" name="start_time" id="startTime" value="00:00">
+          </div>
+          <label class="form-label mt-2">نهاية الإتاحة <span class="hint">(اختياري)</span></label>
+          <div class="d-flex gap-2">
+            <input class="form-control" type="date" name="end_date" id="endDate">
+            <input class="form-control" type="time" name="end_time" id="endTime" value="23:59">
+          </div>
+        </div>
+        <div class="col-12">
+          <label class="form-label">المنطقة الزمنية</label>
+          <input class="form-control" name="timezone" value="{{ timezone }}">
+        </div>
+        <div class="col-6">
+          <label class="form-label">مدة الاختبار (دقيقة)</label>
+          <input class="form-control" type="number" name="duration_minutes" min="0" max="600"
+                 value="{{ exam.duration_minutes if exam else 0 }}">
+          <div class="form-text">0 = بلا حد زمني.</div>
+        </div>
+        <div class="col-6">
+          <label class="form-label">عدد المحاولات</label>
+          <input class="form-control" type="number" name="max_attempts" min="0" max="100"
+                 value="{{ exam.max_attempts if exam else 1 }}">
+          <div class="form-text">0 = غير محدودة.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-gear"></i> خيارات</h2></div>
+      <div class="panel-body d-flex flex-column gap-2">
+        {% set opts = [
+          ('allow_retake', 'السماح بإعادة المحاولة', True),
+          ('count_abandoned_attempts', 'احتساب المحاولات المهجورة', True),
+          ('shuffle_questions', 'خلط ترتيب الأسئلة', False),
+          ('shuffle_options', 'خلط ترتيب الخيارات', False),
+          ('show_results', 'إظهار النتيجة بعد التسليم', True),
+          ('show_solutions_after_submit', 'إظهار الإجابات الصحيحة والشرح', True)
+        ] %}
+        {% for key, label, default in opts %}
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" name="{{ key }}" id="opt_{{ key }}"
+                 {{ 'checked' if (exam[key] if exam else default) }}>
+          <label class="form-check-label" for="opt_{{ key }}">{{ label }}</label>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-body d-flex gap-2">
+        <button class="btn btn-primary flex-grow-1" type="submit">
+          <i class="bi bi-save"></i> {{ 'حفظ التعديلات' if mode == 'edit' else 'إنشاء الاختبار' }}
+        </button>
+        <a class="btn btn-outline-secondary" href="/exams">إلغاء</a>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => TQM.initExamForm());
+</script>
+{% endblock %}

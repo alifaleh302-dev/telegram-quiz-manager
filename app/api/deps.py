@@ -178,6 +178,10 @@ _PAGE_MAP = {
     "/analytics": "analytics",
     "/users": "users",
     "/settings": "settings",
+    "/exams": "exams",
+    "/students": "students",
+    "/attempts": "attempts",
+    "/exam-analytics": "exam-analytics",
 }
 
 

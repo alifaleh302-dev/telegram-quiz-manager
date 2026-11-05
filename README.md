@@ -20,7 +20,14 @@
 | الإحصائيات | تفاعل الأعضاء مع كل سؤال في كل قناة: عدد التصويتات، نسبة المشاركة، نسبة الإجابات الصحيحة، تفصيل الخيارات، ورسم للنشاط اليومي |
 | الإعدادات | إعدادات النشر، **التباعد بين الأسئلة (حماية من حدود تيليجرام)**، إعدادات الإحصائيات، كلمة المرور، سجل تسجيل الدخول، النسخ الاحتياطي والاستعادة والتصدير ZIP |
 | حسابات userbot | إضافة عدة حسابات مستخدم (`api_id`/`api_hash`)، تسجيل دخول بخطوتين (رمز + 2FA)، تعيين حساب افتراضي، اختبار الجلسة، وتخزين المفاتيح مشفَّرة |
-| المستخدمون والصلاحيات | حسابات متعددة بأدوار (مدير/مستخدم)، منح الصلاحيات لكل حساب (بنك الأسئلة، القنوات، الجداول، النشر اليدوي، الأتمتة، الإحصائيات)، إعادة تعيين كلمة المرور، وسجل تسجيل الدخول |
+| المستخدمون والصلاحيات | حسابات متعددة بأدوار (مدير/مستخدم)، منح الصلاحيات لكل حساب (بنك الأسئلة، القنوات، الجداول، النشر اليدوي، الأتمتة، الإحصائيات، **الاختبارات**)، إعادة تعيين كلمة المرور، وسجل تسجيل الدخول |
+| منصة الاختبارات | إنشاء اختبارات مجمّعة من بنك الأسئلة، جدولة الإتاحة، مدة ومحاولات محدودة، نشر وإغلاق وأرشفة، متابعة الطلاب والمحاولات، وتحليل النتائج (أصعب الأسئلة، معدل الإكمال) |
+| تطبيق الطالب (Telegram Mini App) | بوابة `/app` داخل تيليجرام: مكتبة الاختبارات، خوض الاختبار بمؤقّت، الحفظ التلقائي، التسليم، المراجعة والنتيجة، والإشعارات |
+
+> **منصة الاختبارات** وحدة جديدة فوق النظام نفسه: تُخزَّن بياناتها في قاعدة SQLite
+> ذاتها، ولا تتأثر قنوات النشر ولا بنك الأسئلة. أسئلة الاختبار تُحفَظ كلقطة
+> (snapshot) عند الإنشاء، فتعديل سؤال في البنك لاحقاً **لا يغيّر** نتائج محاولات
+> قديمة. النشر لا يُحتسب إلا بعد تأكيد `sendPoll` من Telegram.
 
 ---
 
@@ -70,19 +77,21 @@ app/
 │   ├── logging.py          # تسجيل موحّد إلى ملف ودوران الملفات
 │   ├── permissions.py      # كتالوج الصلاحيات والأدوار (مدير/مستخدم)
 │   └── security.py         # Argon2، جلسات موقّعة، CSRF، تشفير الأسرار (Fernet)
-├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, analytics, settings, users, auth
-├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, users, secret_store, userbot, backup, audit
-├── telegram/               # ناقلات النشر: عميل البوت (Bot API)، عميل userbot (MTProto)، الموجِّه (transport)، ومدير البوت (polling/webhook)
-├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler)
+├── api/                    # الراوترات: dashboard, questions, channels, schedules, publishing, analytics, settings, users, auth, admin_exams, student
+├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, users, secret_store, userbot, backup, audit, students, exams, attempts, notifications
+├── telegram/               # ناقلات النشر: عميل البوت (Bot API)، عميل userbot (MTProto)، الموجِّه (transport)، ومدير البوت (polling/webhook + Mini App)
+├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler + مهام الاختبارات)
 ├── storage/                # SQLite (اتصال واحد + معاملات ذرّية) + التحقق من الصحة
-├── templates/              # واجهات Jinja2 (RTL عربية)
-└── static/                 # CSS و JavaScript
+├── templates/              # واجهات Jinja2 (RTL عربية) + تطبيق الطالب student.html
+└── static/                 # CSS و JavaScript (لوحة الإدارة + تطبيق الطالب)
 
 data/      # tqm.db (قاعدة بيانات SQLite واحدة: questions / channels / schedules /
            #   publishing_history / poll_results / poll_answers / userbot_accounts /
-           #   settings / users / secrets / audit_log) + backups/
+           #   students / exams / exam_questions / attempts / attempt_answers /
+           #   student_exam_state / notifications / settings / users / secrets /
+           #   audit_log) + backups/
 logs/      # app.log
-tests/     # 277 اختباراً
+tests/     # 337 اختباراً
 tools/     # smoke_test.sh · telegram_check.py
 examples/  # questions.sample.json (نموذج استيراد)
 ```
@@ -147,6 +156,21 @@ examples/  # questions.sample.json (نموذج استيراد)
 | POST | `/api/users/{username}/password` | إعادة تعيين كلمة مرور حساب |
 | POST | `/api/settings/password` | تغيير كلمة المرور |
 | POST | `/api/backups/create` · `/api/export` | نسخة احتياطية / تصدير ZIP |
+| GET/POST | `/api/admin/exams` | عرض/إنشاء اختبار |
+| GET/PUT/DELETE | `/api/admin/exams/{id}` | عرض/تعديل/حذف اختبار |
+| POST | `/api/admin/exams/{id}/questions` | تعيين أسئلة الاختبار |
+| POST | `/api/admin/exams/{id}/publish` · `/close` · `/archive` · `/reopen` | نشر/إغلاق/أرشفة/إعادة فتح |
+| GET | `/api/admin/exams/{id}/attempts` | محاولات اختبار محدّد |
+| GET | `/api/admin/students` · `/api/admin/students/{id}/attempts` | الطلاب ومحاولاتهم |
+| POST | `/api/admin/students/{id}/exams/{exam_id}/reset` | تصفير محاولات طالب في اختبار |
+| GET | `/api/admin/attempts` · `/api/admin/attempts/{id}` | كل المحاولات / تفصيل محاولة |
+| GET | `/api/admin/analytics` | تحليل الاختبارات (أصعب الأسئلة، معدل الإكمال) |
+| POST | `/api/student/auth` | مصادقة Mini App عبر `initData` |
+| GET | `/api/student/profile` · `/dashboard` · `/exams` · `/exams/{id}` · `/exams/{id}/eligibility` | بيانات الطالب ومكتبة الاختبارات |
+| POST | `/api/student/exams/{id}/start` | بدء محاولة |
+| GET/POST | `/api/student/attempts/{id}` · `/answers` · `/submit` · `/review` · `/result` | خوض المحاولة وحفظ الإجابات والتسليم والمراجعة |
+| GET/POST | `/api/student/notifications` · `/notifications/{id}/read` · `/notifications/prefs` | إشعارات الطالب وتفضيلاته |
+| GET | `/app` | تطبيق الطالب (Telegram Mini App) |
 | GET | `/healthz` | فحص الحالة |
 
 ---
@@ -281,6 +305,50 @@ examples/  # questions.sample.json (نموذج استيراد)
 
 ---
 
+## 5.2 منصة الاختبارات وتطبيق الطالب (Telegram Mini App)
+
+وحدة جديدة فوق النظام نفسه (نفس قاعدة SQLite، نفس الصلاحيات)، مستقلة تماماً عن قنوات
+النشر وبنك الأسئلة.
+
+### كيف أُعدّها؟
+
+1. **بنك الأسئلة**: تأكد من وجود أسئلة بحالة «جاهز».
+2. **الاختبارات ← اختبار جديد**: أدخل العنوان والتصنيف، اختر نمط الإتاحة
+   (`always` متاح دائماً أو `scheduled` بنافذة بداية/نهاية ومنطقة زمنية)، حدّد
+   المدة (0 = بلا حد) وعدد المحاولات (0 = غير محدود)، واختر الأسئلة من البنك.
+3. اضغط **نشر** ليصبح الاختبار ظاهراً في تطبيق الطالب. النشر يُرسل إشعاراً للطلاب
+   المسجَّلين. يمكنك **إغلاق** الاختبار أو **أرشفته** أو **إعادة فتحه** لاحقاً.
+4. اضبط `MINI_APP_URL` بعنوان HTTPS العام (مثلاً عنوان Railway) — عندها يظهر زر
+   **اختباراتي** في قائمة البوت، ويصبح `/exams` في البوت رابطاً مباشراً للتطبيق.
+5. شارك رابط التطبيق: `https://<your-domain>/app` (يُفتح داخل تيليجرام).
+
+### صفحات الإدارة الجديدة
+
+| الصفحة | الوظيفة |
+| --- | --- |
+| `/exams` | كل الاختبارات مع عدد الأسئلة والطلاب ومتوسط النتيجة + تصفية وبحث |
+| `/exams/new` · `/exams/{id}/edit` | محرر الاختبار: الإعدادات + اختيار الأسئلة من البنك |
+| `/exams/{id}` | تفاصيل الاختبار: محاولات الطلاب، الحالة الفعلية، وإجراءات النشر |
+| `/students` | الطلاب المسجَّلون، عدد محاولاتهم ومتوسطهم |
+| `/attempts` | كل المحاولات مع تصفية حسب الاختبار والطالب |
+| `/exam-analytics` | نظرة عامة: معدل الإكمال، متوسط النتائج، وأصعب الأسئلة |
+
+### ضمانات سلامة النتائج
+
+- **لقطة (snapshot)**: عند إضافة أسئلة لاختبار تُحفظ نصوص الأسئلة والخيارات والإجابة
+  الصحيحة في `exam_questions` بإصدار (`version`). تعديل سؤال في البنك لاحقاً **لا يغيّر**
+  نتائج محاولات قديمة.
+- **الوقت من الخادم**: كل مقارنات الإتاحة والمدة والنافذة تُحسب على الخادم، لا على جهاز
+  الطالب. محاولة منتهية المدة تُغلق تلقائياً (مهمة `exam:sweep-attempts` كل 5 دقائق).
+- **حدود المحاولات**: تُحسب المحاولات المكتملة (والمنتهية/المتروكة حسب إعداد الاختبار)،
+  ولا يمكن بدء محاولة جديدة عند بلوغ الحد أو إغلاق الاختبار.
+- **الحفظ التلقائي**: كل إجابة تُحفظ فور اختيارها؛ إعادة تحميل الصفحة تستأنف المحاولة.
+- **الإشعارات**: تُدفع للطلاب عبر البوت (`exam:dispatch-notifications` كل دقيقتين)، مع
+  احترام تفضيلات الطالب وحالة `notifications_enabled`، ولا تُرسل لمستخدم لم يبدأ محادثة
+  مع البوت.
+
+---
+
 ## 6. الأمان
 
 - **كلمة المرور** بـ Argon2id (مع ترقية تلقائية عند تغيّر البارامترات).
@@ -299,22 +367,29 @@ examples/  # questions.sample.json (نموذج استيراد)
   صلاحيتها، ويُخفى «آخر العمليات» (سجل التدقيق) في لوحة التحكم عن غير المدير. سجل النشر
   `/history` وواجهته `/api/history` مقصوران على المدير. صفحة الإعدادات تبقى متاحة للجميع
   لكن الألواح النظامية فيها تظهر للمدير فقط.
+- **تطبيق الطالب (Mini App)**: الهوية تُثبت على الخادم حصراً من `initData` الموقّع من
+  Telegram (HMAC-SHA256 بمفتاح مشتق من توكن البوت)، وتُرفض البيانات الأقدم من
+  `TELEGRAM_AUTH_MAX_AGE`، ولا يُوثق بأي معرّف يرسله العميل. جلسة الطالب رمز موقّع
+  (`itsdangerous`) يحمل `telegram_user_id` فقط، والعمليات المُعدِّلة (بدء/حفظ/تسليم) تتطلب
+  ترويسة `X-Telegram-Init-Data` حديثة لا مجرد الرمز. النشر إلى تيليجرام لا يخرج عن قنوات
+  الإدارة: الطالب لا يستطيع إرسال شيء.
 
-قبل النشر على الإنترنت: شغّل خلف HTTPS، اضبط `SESSION_COOKIE_SECURE=true`، واستخدم
-`SECRET_KEY` عشوائياً طويلاً.
+قبل النشر على الإنترنت: شغّل خلف HTTPS، اضبط `SESSION_COOKIE_SECURE=true`، واضبط
+`MINI_APP_URL` بعنوان HTTPS العام، واستخدم `SECRET_KEY` عشوائياً طويلاً.
 
 ---
 
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 277 اختباراً
+python -m pytest              # 337 اختباراً
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
 
 تغطي الاختبارات: تخزين SQLite والمعاملات الذرّية والنسخ الاحتياطي والهجرة من JSON، التحقق من صحة الأسئلة، الأمان وCSRF،
-الجدولة (بناء المحفّزات وحدود النشر)، دورة النشر، وضمانات إعادة التشغيل، وواجهات API كاملة
+الجدولة (بناء المحفّزات وحدود النشر)، دورة النشر، وضمانات إعادة التشغيل، ومنصة الاختبارات
+(لقطات الأسئلة، حدود المحاولات، نوافذ الإتاحة، مصادقة `initData`، الإشعارات)، وواجهات API كاملة
 عبر `TestClient`. الشبكة الوحيدة المُستبدلة في الاختبارات هي Telegram.
 
 ---

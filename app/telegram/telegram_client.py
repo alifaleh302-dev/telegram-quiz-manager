@@ -270,6 +270,35 @@ class TelegramClient:
         except Exception as exc:  # noqa: BLE001
             return self._classify(exc)
 
+    async def send_message(
+        self,
+        chat_id: str | int,
+        text: str,
+        *,
+        reply_markup: Any = None,
+        disable_web_page_preview: bool = True,
+    ) -> PublishResult:
+        """Send a plain text message (used for student notifications).
+
+        Never raises: a notification failure must not break the caller, so the
+        outcome is returned as a :class:`PublishResult` the way quizzes are.
+        """
+        if self.dry_run:
+            logger.info("[dry-run] would message %s: %s", chat_id, text[:80])
+            await asyncio.sleep(0)
+            return PublishResult(ok=True, message_id=None, dry_run=True)
+        try:
+            bot = await self._get_bot()
+            message = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            return PublishResult(ok=True, message_id=message.message_id)
+        except Exception as exc:  # noqa: BLE001 - telegram raises a wide hierarchy
+            return self._classify(exc)
+
     async def get_me(self) -> dict[str, Any] | None:
         if self.dry_run:
             return {"username": "dry-run-bot", "id": 0, "dry_run": True}

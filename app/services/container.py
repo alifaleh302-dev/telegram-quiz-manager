@@ -11,11 +11,15 @@ from app.services.analytics_service import AnalyticsService
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
 from app.services.channel_service import ChannelService
+from app.services.exam_attempt_service import ExamAttemptService
+from app.services.exam_service import ExamService
+from app.services.notification_service import NotificationService
 from app.services.publishing_service import PublishingService
 from app.services.question_service import QuestionService
 from app.services.schedule_service import ScheduleService
 from app.services.secret_store import SecretStore
 from app.services.settings_service import SettingsService
+from app.services.student_service import StudentService
 from app.services.user_service import UserService
 from app.services.userbot_service import UserbotAccountService
 from app.storage.sqlite_manager import Storage
@@ -47,6 +51,11 @@ class Services:
     secrets: SecretStore
     userbots: UserbotManager
     userbot_accounts: UserbotAccountService
+    # --- Exam platform ---
+    students: StudentService
+    exams: ExamService
+    attempts: ExamAttemptService
+    notifications: NotificationService
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -86,6 +95,12 @@ def build_services(settings: Settings) -> Services:
     analytics = AnalyticsService(storage, audit, questions, channels)
     backups = BackupService(storage, audit)
 
+    # --- Exam platform ---
+    students = StudentService(storage, audit)
+    exams = ExamService(storage, audit, questions)
+    attempts = ExamAttemptService(storage, audit, exams)
+    notifications = NotificationService(storage, audit, students, exams, transport)
+
     runner = ScheduleRunner(
         questions=questions,
         schedules=schedules,
@@ -93,7 +108,10 @@ def build_services(settings: Settings) -> Services:
         settings=app_settings,
         audit=audit,
     )
-    engine = SchedulerEngine(runner, schedules, analytics, app_settings, transport)
+    engine = SchedulerEngine(
+        runner, schedules, analytics, app_settings, transport,
+        attempts=attempts, notifications=notifications,
+    )
     bot = BotManager(
         {
             "questions": questions,
@@ -125,4 +143,8 @@ def build_services(settings: Settings) -> Services:
         secrets=secrets,
         userbots=userbots,
         userbot_accounts=userbot_accounts,
+        students=students,
+        exams=exams,
+        attempts=attempts,
+        notifications=notifications,
     )

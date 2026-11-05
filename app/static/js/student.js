@@ -1,0 +1,592 @@
+/* Student Mini App — single-page controller.
+ *
+ * Identity: on load we read Telegram.WebApp.initData (the signed payload) and
+ * exchange it for a short-lived student token. Every request then carries the
+ * token; mutating requests also carry the raw initData so the server can prove
+ * the call comes from a live Telegram session. The client never sends its own
+ * user id — the server derives it from the signature.
+ */
+const SA = (() => {
+  const tg = window.Telegram?.WebApp;
+  let studentToken = '';
+  let initData = '';
+  let state = { view: 'home', stack: [], exam: null, session: null, timer: null };
+
+  // --- low-level -----------------------------------------------------------
+  function headers(write = false) {
+    const h = { 'X-Student-Token': studentToken };
+    if (write && initData) h['X-Telegram-Init-Data'] = initData;
+    return h;
+  }
+
+  async function api(path, { method = 'GET', body, write = false } = {}) {
+    const options = { method, headers: headers(write) };
+    if (body !== undefined) {
+      options.headers['Content-Type'] = 'application/json';
+      options.body = JSON.stringify(body);
+    }
+    let response;
+    try {
+      response = await fetch(path, options);
+    } catch {
+      throw new Error('تعذّر الاتصال بالخادم.');
+    }
+    const text = await response.text();
+    let data = {};
+    if (text) {
+      try { data = JSON.parse(text); } catch { data = { error: text }; }
+    }
+    if (!response.ok) {
+      throw new Error(data.detail || data.error || `فشل الطلب (${response.status}).`);
+    }
+    return data;
+  }
+
+  function el(html) {
+    const t = document.createElement('template');
+    t.innerHTML = html.trim();
+    return t.content.firstElementChild;
+  }
+  function esc(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+  function alertMsg(message) {
+    const box = document.getElementById('saAlert');
+    if (!message) { box.hidden = true; return; }
+    box.textContent = message;
+    box.hidden = false;
+    setTimeout(() => { box.hidden = true; }, 4000);
+  }
+  function setHeader(title, subtitle, showBack) {
+    document.getElementById('saTitle').textContent = title;
+    document.getElementById('saSubtitle').textContent = subtitle || '';
+    document.getElementById('saBack').hidden = !showBack;
+  }
+  const view = () => document.getElementById('saView');
+  function render(node) { const v = view(); v.innerHTML = ''; v.appendChild(node); }
+  const fmtPct = (v) => `${Math.round(Number(v) || 0)}%`;
+  function fmtDuration(seconds) {
+    const s = Math.max(0, Math.floor(Number(seconds) || 0));
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  // --- bootstrap -----------------------------------------------------------
+  async function boot() {
+    if (tg) { tg.ready(); tg.expand(); applyTheme(); }
+    initData = tg?.initData || '';
+    try {
+      if (!initData) {
+        // Opened outside Telegram (or an old client): show a clear message
+        // instead of a blank screen.
+        render(emptyState('bi-telegram', 'افتح التطبيق من داخل تيليجرام', 'هذه الصفحة تعمل كتطبيق مصغّر داخل تيليجرام فقط.'));
+        document.getElementById('saTabs').hidden = true;
+        return;
+      }
+      const auth = await fetch('/api/student/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ init_data: initData }),
+      });
+      const data = await auth.json();
+      if (!auth.ok) throw new Error(data.detail || 'فشل تسجيل الدخول.');
+      studentToken = data.token;
+      await refreshBadge();
+      await go('home');
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'تعذّر الدخول', error.message));
+    }
+  }
+
+  function applyTheme() {
+    if (!tg?.themeParams) return;
+    document.documentElement.setAttribute('data-theme', tg.colorScheme || 'dark');
+  }
+
+  async function refreshBadge() {
+    try {
+      const data = await api('/api/student/notifications');
+      const badge = document.getElementById('saBellBadge');
+      badge.textContent = data.unread;
+      badge.hidden = !data.unread;
+    } catch { /* badge is non-critical */ }
+  }
+
+  // --- navigation ----------------------------------------------------------
+  async function go(tab) {
+    state.view = tab;
+    document.querySelectorAll('#saTabs button').forEach((b) =>
+      b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('saBack').hidden = true;
+    const loaders = {
+      home: loadHome, exams: loadExams, results: loadResults,
+      notifications: loadNotifications, profile: loadProfile,
+    };
+    render(loading());
+    try {
+      await loaders[tab]();
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'خطأ', error.message));
+    }
+  }
+
+  const loading = () => el('<div class="sa-loading"><div class="spinner-border text-primary" role="status"></div></div>');
+  function emptyState(icon, title, text) {
+    return el(`<div class="sa-empty"><i class="bi ${icon}"></i><h3>${esc(title)}</h3><p>${esc(text || '')}</p></div>`);
+  }
+  function statCard(value, label) {
+    return el(`<div class="sa-stat"><div class="value">${esc(value)}</div><div class="label">${esc(label)}</div></div>`);
+  }
+  function chip(label, cls) {
+    return `<span class="sa-chip ${cls}">${esc(label)}</span>`;
+  }
+
+  // --- home ----------------------------------------------------------------
+  async function loadHome() {
+    const data = await api('/api/student/dashboard');
+    const s = data.summary;
+    const wrap = el('<div></div>');
+    const stats = el('<div class="sa-stats"></div>');
+    stats.append(
+      statCard(s.total_available, 'اختبارات متاحة'),
+      statCard(s.completed_exams, 'اختبارات مكتملة'),
+      statCard(s.new_exams, 'اختبارات جديدة'),
+      statCard(fmtPct(s.average_percentage), 'متوسط النتائج'),
+    );
+    wrap.appendChild(stats);
+
+    if (data.continue.length) {
+      wrap.appendChild(sectionTitle('أكمل ما بدأته'));
+      data.continue.forEach((e) => wrap.appendChild(examCard(e)));
+    }
+    if (data.new_exams.length) {
+      wrap.appendChild(sectionTitle('اختبارات جديدة'));
+      data.new_exams.forEach((e) => wrap.appendChild(examCard(e)));
+    }
+    if (data.upcoming.length) {
+      wrap.appendChild(sectionTitle('قادمة'));
+      data.upcoming.forEach((e) => wrap.appendChild(examCard(e)));
+    }
+    if (!data.continue.length && !data.new_exams.length && !data.upcoming.length) {
+      wrap.appendChild(emptyState('bi-inbox', 'لا توجد اختبارات متاحة حالياً', 'سيظهر هنا أي اختبار جديد.'));
+    }
+    setHeader('اختباراتي', 'بوابة الطالب', false);
+    render(wrap);
+  }
+
+  function sectionTitle(text, action) {
+    const node = el(`<div class="sa-section-title"><h2>${esc(text)}</h2></div>`);
+    if (action) {
+      const button = el(`<button>${esc(action.label)}</button>`);
+      button.addEventListener('click', action.onClick);
+      node.appendChild(button);
+    }
+    return node;
+  }
+
+  function statusChip(exam) {
+    if (exam.label === 'in_progress') return chip('قيد التنفيذ', 'in_progress');
+    if (exam.label === 'new') return chip('جديد', 'new');
+    if (exam.state === 'upcoming') return chip('لم يبدأ', 'upcoming');
+    if (exam.state === 'closed' || exam.state === 'archived') return chip('منتهي', 'closed');
+    if (exam.attempts_submitted > 0) return chip('مكتمل', 'completed');
+    return chip('متاح', 'available');
+  }
+
+  function examCard(exam) {
+    const node = el(`
+      <div class="sa-card sa-exam">
+        <div class="sa-exam-head">
+          <h3>${esc(exam.title)}</h3>
+          ${statusChip(exam)}
+        </div>
+        <div class="sa-meta">
+          <span><i class="bi bi-list-ol"></i> ${exam.question_count} سؤال</span>
+          ${exam.duration_minutes ? `<span><i class="bi bi-clock"></i> ${exam.duration_minutes} دقيقة</span>` : ''}
+          ${exam.category ? `<span><i class="bi bi-tag"></i> ${esc(exam.category)}</span>` : ''}
+          ${exam.best_percentage !== null && exam.best_percentage !== undefined
+            ? `<span><i class="bi bi-star"></i> أفضل نتيجة ${fmtPct(exam.best_percentage)}</span>` : ''}
+        </div>
+        <button class="sa-btn">${exam.label === 'in_progress' ? 'متابعة' : 'عرض التفاصيل'}</button>
+      </div>`);
+    node.querySelector('button').addEventListener('click', () => openExam(exam.id));
+    return node;
+  }
+
+  // --- exam detail ---------------------------------------------------------
+  async function openExam(examId) {
+    render(loading());
+    try {
+      const data = await api(`/api/student/exams/${examId}`);
+      const exam = data.exam;
+      const wrap = el('<div></div>');
+      wrap.appendChild(el(`
+        <div class="sa-card">
+          <h3>${esc(exam.title)}</h3>
+          <div class="sa-meta" style="margin:8px 0">
+            <span><i class="bi bi-list-ol"></i> ${exam.question_count} سؤال</span>
+            ${exam.duration_minutes ? `<span><i class="bi bi-clock"></i> ${exam.duration_minutes} دقيقة</span>` : ''}
+            <span><i class="bi bi-arrow-repeat"></i> ${exam.max_attempts === 0 ? 'محاولات غير محدودة' : `${exam.max_attempts} محاولة`}</span>
+          </div>
+          <p class="sa-note">${esc(exam.description || 'لا يوجد وصف.')}</p>
+        </div>`));
+
+      if (exam.starts_at || exam.ends_at) {
+        wrap.appendChild(el(`<div class="sa-card"><h3>النافذة الزمنية</h3>
+          <p class="sa-note">${exam.starts_at ? 'تبدأ: ' + esc(exam.starts_at) : ''}
+          ${exam.ends_at ? '<br>تنتهي: ' + esc(exam.ends_at) : ''}</p></div>`));
+      }
+
+      if (data.attempts.length) {
+        wrap.appendChild(sectionTitle('محاولاتك السابقة'));
+        data.attempts.forEach((a) => wrap.appendChild(attemptRow(a, exam)));
+      }
+
+      const action = el('<button class="sa-btn"></button>');
+      const eligibility = await api(`/api/student/exams/${examId}/eligibility`);
+      if (eligibility.active_attempt_id) {
+        action.textContent = 'متابعة المحاولة';
+        action.addEventListener('click', () => resumeAttempt(eligibility.active_attempt_id));
+      } else if (eligibility.can_start) {
+        action.textContent = 'بدء الاختبار';
+        action.addEventListener('click', () => confirmStart(exam));
+      } else {
+        action.textContent = eligibility.reason || 'غير متاح';
+        action.disabled = true;
+      }
+      wrap.appendChild(action);
+
+      setHeader(exam.title, 'تفاصيل الاختبار', true);
+      render(wrap);
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'خطأ', error.message));
+    }
+  }
+
+  function attemptRow(attempt, exam) {
+    const node = el(`
+      <div class="sa-card sa-exam">
+        <div class="sa-exam-head">
+          <h3>محاولة رقم ${attempt.attempt_number}</h3>
+          <span class="sa-chip ${attempt.status === 'submitted' ? 'completed' : 'closed'}">${attempt.status === 'submitted' ? 'مكتملة' : 'منتهية'}</span>
+        </div>
+        <div class="sa-meta">
+          <span><i class="bi bi-percent"></i> ${fmtPct(attempt.percentage)}</span>
+          <span><i class="bi bi-check2"></i> ${attempt.correct_count} صحيحة</span>
+          <span><i class="bi bi-x"></i> ${attempt.wrong_count} خاطئة</span>
+        </div>
+        <button class="sa-btn secondary">مراجعة</button>
+      </div>`);
+    node.querySelector('button').addEventListener('click', () => openReview(attempt.id));
+    return node;
+  }
+
+  function confirmStart(exam) {
+    openModal('بدء الاختبار', `<p class="sa-note">سيبدأ المؤقّت بمجرد الضغط على «ابدأ».
+      ${exam.duration_minutes ? `مدة الاختبار ${exam.duration_minutes} دقيقة.` : 'لا يوجد حد زمني.'}</p>`,
+      [{ label: 'ابدأ', onClick: () => startAttempt(exam.id) }, { label: 'إلغاء', secondary: true }]);
+  }
+
+  async function startAttempt(examId) {
+    closeModal();
+    render(loading());
+    try {
+      const data = await api(`/api/student/exams/${examId}/start`, { method: 'POST', write: true });
+      openSession(data);
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'تعذّر البدء', error.message));
+    }
+  }
+
+  async function resumeAttempt(attemptId) {
+    render(loading());
+    try {
+      const data = await api(`/api/student/attempts/${attemptId}`);
+      openSession(data);
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'خطأ', error.message));
+    }
+  }
+
+  // --- session -------------------------------------------------------------
+  function openSession(data) {
+    const questions = data.questions;
+    let index = 0;
+    const answers = {};
+    questions.forEach((q) => { if (q.selected_option !== null && q.selected_option !== undefined) answers[q.question_id] = q.selected_option; });
+
+    const wrap = el('<div></div>');
+    const top = el(`<div class="sa-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span class="sa-note" id="saCounter"></span>
+        <span class="sa-timer" id="saTimer"></span>
+      </div>
+      <div class="sa-progress"><div id="saBar" style="width:0%"></div></div>
+    </div>`);
+    const body = el('<div class="sa-card"></div>');
+    const nav = el(`<div class="sa-nav-row">
+      <button class="sa-btn secondary" id="saPrev">السابق</button>
+      <button class="sa-btn" id="saNext">التالي</button>
+    </div>`);
+    const submitBtn = el('<button class="sa-btn" id="saSubmit" style="background:#ef4444">تسليم الاختبار</button>');
+    wrap.append(top, body, nav, submitBtn);
+    setHeader(data.exam.title, 'قيد التنفيذ', false);
+    render(wrap);
+
+    const timerEl = document.getElementById('saTimer');
+    const counterEl = document.getElementById('saCounter');
+    const barEl = document.getElementById('saBar');
+
+    function paint() {
+      const q = questions[index];
+      counterEl.textContent = `السؤال ${index + 1} من ${questions.length}`;
+      barEl.style.width = `${Math.round(((index + 1) / questions.length) * 100)}%`;
+      body.innerHTML = `<div class="sa-question-text">${esc(q.question)}</div>`;
+      q.options.forEach((option, optIndex) => {
+        const optionNode = el(`<button class="sa-option ${answers[q.question_id] === optIndex ? 'selected' : ''}">
+          <span class="key">${String.fromCharCode(65 + optIndex)}</span>
+          <span>${esc(option)}</span></button>`);
+        optionNode.addEventListener('click', () => {
+          answers[q.question_id] = optIndex;
+          api(`/api/student/attempts/${data.attempt.id}/answers`, {
+            method: 'POST', write: true,
+            body: { question_id: q.question_id, selected_option: optIndex },
+          }).catch((error) => alertMsg(error.message));
+          paint();
+        });
+        body.appendChild(optionNode);
+      });
+      document.getElementById('saPrev').disabled = index === 0;
+      document.getElementById('saNext').hidden = index === questions.length - 1;
+    }
+
+    document.getElementById('saPrev').addEventListener('click', () => { if (index > 0) { index -= 1; paint(); } });
+    document.getElementById('saNext').addEventListener('click', () => { if (index < questions.length - 1) { index += 1; paint(); } });
+    document.getElementById('saSubmit').addEventListener('click', () => confirmSubmit(data.attempt.id, answers, questions));
+    paint();
+
+    if (data.attempt.expires_at) {
+      const end = new Date(data.attempt.expires_at).getTime();
+      state.timer = setInterval(() => {
+        const remaining = Math.floor((end - Date.now()) / 1000);
+        if (remaining <= 0) {
+          clearInterval(state.timer);
+          timerEl.textContent = '00:00';
+          submitAttempt(data.attempt.id);
+          return;
+        }
+        timerEl.textContent = fmtDuration(remaining);
+        timerEl.classList.toggle('warning', remaining < 60);
+      }, 1000);
+    } else {
+      timerEl.textContent = '∞';
+    }
+  }
+
+  function confirmSubmit(attemptId, answers, questions) {
+    const unanswered = questions.filter((q) => answers[q.question_id] === undefined).length;
+    openModal('تسليم الاختبار',
+      `<p class="sa-note">${unanswered ? `لديك ${unanswered} سؤالاً بلا إجابة. ` : ''}هل تريد التسليم الآن؟ لا يمكن التراجع.</p>`,
+      [{ label: 'تسليم', onClick: () => { closeModal(); submitAttempt(attemptId); } },
+       { label: 'إلغاء', secondary: true }]);
+  }
+
+  async function submitAttempt(attemptId) {
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    render(loading());
+    try {
+      const data = await api(`/api/student/attempts/${attemptId}/submit`, { method: 'POST', write: true });
+      await refreshBadge();
+      showResult(data.result);
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'تعذّر التسليم', error.message));
+    }
+  }
+
+  // --- result & review -----------------------------------------------------
+  function showResult(result) {
+    const wrap = el('<div></div>');
+    wrap.appendChild(el(`<div class="sa-card sa-result-ring">
+      <div class="pct">${fmtPct(result.percentage)}</div>
+      <div class="sa-note">${esc(result.exam_title)}</div>
+    </div>`));
+    const grid = el('<div class="sa-result-grid"></div>');
+    grid.append(
+      statCard(result.correct_count, 'صحيحة'),
+      statCard(result.wrong_count, 'خاطئة'),
+      statCard(result.unanswered_count, 'بلا إجابة'),
+    );
+    wrap.appendChild(grid);
+    wrap.appendChild(el(`<div class="sa-card"><div class="sa-meta">
+      <span><i class="bi bi-stopwatch"></i> المدة ${fmtDuration(result.duration_seconds)}</span>
+      <span><i class="bi bi-award"></i> ${result.score}/${result.total_score}</span>
+    </div></div>`));
+
+    if (result.show_solutions) {
+      const review = el('<button class="sa-btn">مراجعة الإجابات</button>');
+      review.addEventListener('click', () => openReview(result.id));
+      wrap.appendChild(review);
+    }
+    const home = el('<button class="sa-btn secondary">العودة للرئيسية</button>');
+    home.addEventListener('click', () => go('home'));
+    wrap.appendChild(home);
+
+    setHeader('النتيجة', result.exam_title, false);
+    render(wrap);
+  }
+
+  async function openReview(attemptId) {
+    render(loading());
+    try {
+      const data = await api(`/api/student/attempts/${attemptId}/review`);
+      const wrap = el('<div></div>');
+      wrap.appendChild(el(`<div class="sa-card sa-result-ring">
+        <div class="pct">${fmtPct(data.attempt.percentage)}</div>
+        <div class="sa-note">${esc(data.exam.title)}</div></div>`));
+      data.questions.forEach((q, i) => {
+        const card = el(`<div class="sa-card"><div class="sa-question-text">${i + 1}. ${esc(q.question)}</div></div>`);
+        q.options.forEach((option, optIndex) => {
+          let cls = '';
+          if (q.correct_option_id !== undefined && optIndex === q.correct_option_id) cls = 'correct';
+          else if (q.selected_option === optIndex) cls = 'wrong';
+          card.appendChild(el(`<div class="sa-option ${cls}"><span class="key">${String.fromCharCode(65 + optIndex)}</span><span>${esc(option)}</span></div>`));
+        });
+        if (q.explanation) card.appendChild(el(`<p class="sa-note" style="margin-top:8px"><i class="bi bi-info-circle"></i> ${esc(q.explanation)}</p>`));
+        wrap.appendChild(card);
+      });
+      const back = el('<button class="sa-btn secondary">رجوع</button>');
+      back.addEventListener('click', () => go('results'));
+      wrap.appendChild(back);
+      setHeader('مراجعة الإجابات', data.exam.title, true);
+      render(wrap);
+    } catch (error) {
+      render(emptyState('bi-exclamation-triangle', 'خطأ', error.message));
+    }
+  }
+
+  // --- exams / results / notifications / profile ---------------------------
+  async function loadExams() {
+    const data = await api('/api/student/exams');
+    const wrap = el('<div></div>');
+    if (!data.exams.length) {
+      wrap.appendChild(emptyState('bi-journal-x', 'لا توجد اختبارات', 'لم يُنشر أي اختبار بعد.'));
+    } else {
+      data.exams.forEach((e) => wrap.appendChild(examCard(e)));
+    }
+    setHeader('الاختبارات', `${data.exams.length} اختبار`, false);
+    render(wrap);
+  }
+
+  async function loadResults() {
+    const data = await api('/api/student/attempts');
+    const wrap = el('<div></div>');
+    if (!data.attempts.length) {
+      wrap.appendChild(emptyState('bi-trophy', 'لا توجد نتائج', 'أكمل اختباراً لعرض نتيجتك هنا.'));
+    } else {
+      data.attempts.forEach((a) => {
+        const node = el(`<div class="sa-card sa-exam">
+          <div class="sa-exam-head"><h3>${esc(a.exam_title)}</h3>
+            <span class="sa-chip completed">${fmtPct(a.percentage)}</span></div>
+          <div class="sa-meta">
+            <span><i class="bi bi-hash"></i> محاولة ${a.attempt_number}</span>
+            <span><i class="bi bi-check2"></i> ${a.correct_count}</span>
+            <span><i class="bi bi-x"></i> ${a.wrong_count}</span>
+          </div>
+          <button class="sa-btn secondary">مراجعة</button></div>`);
+        node.querySelector('button').addEventListener('click', () => openReview(a.id));
+        wrap.appendChild(node);
+      });
+    }
+    setHeader('نتائجي', '', false);
+    render(wrap);
+  }
+
+  async function loadNotifications() {
+    const data = await api('/api/student/notifications');
+    await refreshBadge();
+    const wrap = el('<div></div>');
+    if (!data.notifications.length) {
+      wrap.appendChild(emptyState('bi-bell-slash', 'لا توجد تنبيهات', 'ستظهر التنبيهات هنا.'));
+    } else {
+      data.notifications.forEach((note) => {
+        const node = el(`<div class="sa-card">
+          <h3>${esc(note.title)}</h3>
+          <p class="sa-note">${esc(note.body)}</p>
+          <div class="sa-meta" style="margin-top:8px"><span><i class="bi bi-clock-history"></i> ${esc(note.created_at)}</span></div>
+        </div>`);
+        if (!note.read_at) {
+          node.addEventListener('click', async () => {
+            try { await api(`/api/student/notifications/${note.id}/read`, { method: 'POST', write: true }); } catch {}
+            node.style.opacity = '0.7';
+            refreshBadge();
+          });
+        }
+        wrap.appendChild(node);
+      });
+    }
+    setHeader('التنبيهات', data.unread ? `${data.unread} غير مقروء` : '', false);
+    render(wrap);
+  }
+
+  async function loadProfile() {
+    const data = await api('/api/student/profile');
+    const p = data.profile;
+    const wrap = el('<div></div>');
+    wrap.appendChild(el(`<div class="sa-card" style="text-align:center">
+      ${p.photo_url ? `<img src="${esc(p.photo_url)}" alt="" style="width:72px;height:72px;border-radius:50%">` : '<i class="bi bi-person-circle" style="font-size:3rem"></i>'}
+      <h3 style="margin-top:8px">${esc(p.name)}</h3>
+      <p class="sa-note">${p.username ? '@' + esc(p.username) : ''}</p></div>`));
+
+    const toggle = el(`<div class="sa-card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span>تفعيل التنبيهات</span>
+        <input type="checkbox" id="saNotifToggle" ${p.notifications_enabled ? 'checked' : ''} style="width:20px;height:20px">
+      </div></div>`);
+    toggle.querySelector('input').addEventListener('change', async (event) => {
+      try {
+        await api('/api/student/notifications/prefs', {
+          method: 'POST', write: true, body: { enabled: event.target.checked },
+        });
+      } catch (error) { alertMsg(error.message); }
+    });
+    wrap.appendChild(toggle);
+    wrap.appendChild(el(`<div class="sa-card"><div class="sa-meta">
+      <span><i class="bi bi-calendar"></i> انضممت ${esc(p.created_at)}</span>
+    </div></div>`));
+    setHeader('حسابي', '', false);
+    render(wrap);
+  }
+
+  // --- modal ---------------------------------------------------------------
+  function openModal(title, bodyHtml, actions) {
+    const modal = document.getElementById('saModal');
+    document.getElementById('saModalTitle').textContent = title;
+    document.getElementById('saModalBody').innerHTML = bodyHtml;
+    const area = document.getElementById('saModalActions');
+    area.innerHTML = '';
+    actions.forEach((action) => {
+      const button = el(`<button class="sa-btn ${action.secondary ? 'secondary' : ''}">${esc(action.label)}</button>`);
+      button.addEventListener('click', action.onClick);
+      area.appendChild(button);
+    });
+    modal.hidden = false;
+  }
+  function closeModal() { document.getElementById('saModal').hidden = true; }
+
+  // --- wiring --------------------------------------------------------------
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('#saTabs button').forEach((button) =>
+      button.addEventListener('click', () => go(button.dataset.tab)));
+    document.getElementById('saBack').addEventListener('click', () => go(state.view === 'home' ? 'home' : state.view));
+    document.getElementById('saBell').addEventListener('click', () => go('notifications'));
+    document.getElementById('saModal').addEventListener('click', (event) => {
+      if (event.target.id === 'saModal') closeModal();
+    });
+    if (tg) tg.onEvent?.('themeChanged', applyTheme);
+    boot();
+  });
+
+  return { go, openExam, refreshBadge };
+})();

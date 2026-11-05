@@ -1,0 +1,524 @@
+"""Attempts: starting, autosaving, grading, expiry and review.
+
+Integrity rules enforced here (from the spec):
+* A student can never exceed ``max_attempts`` (``0`` = unlimited). The check and
+  the insert happen inside one storage transaction, so two racing "start" calls
+  cannot both slip through.
+* A submitted attempt is immutable: answers stop being accepted and the score
+  is never recomputed from the live bank.
+* Grading runs against the snapshot version pinned when the attempt started, so
+  a later exam edit or question edit cannot change an old result.
+* Every read is scoped to the owning student; :meth:`get_owned` refuses another
+  student's attempt.
+* Expiry is judged from server time; an attempt whose window passed is
+  auto-submitted on the next touch (and by :meth:`sweep_expired`).
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from app.services.audit_service import AuditService
+from app.services.exam_service import ExamService
+from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.validators import ValidationError
+
+STATUS_IN_PROGRESS = "in_progress"
+STATUS_SUBMITTED = "submitted"
+STATUS_EXPIRED = "expired"
+
+
+def _parse_instant(value: str | None) -> datetime | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class AttemptError(ValidationError):
+    """A business-rule violation while starting or answering an attempt."""
+
+
+class ExamAttemptService:
+    def __init__(
+        self, storage: Storage, audit: AuditService, exams: ExamService
+    ) -> None:
+        self._storage = storage
+        self._audit = audit
+        self._exams = exams
+
+    # --- helpers -----------------------------------------------------------
+    @staticmethod
+    def _next_id(counter: int) -> str:
+        return f"AT{counter:06d}"
+
+    def _all(self) -> list[dict[str, Any]]:
+        return self._storage.attempts.read()["attempts"]
+
+    def _all_answers(self) -> list[dict[str, Any]]:
+        return self._storage.attempt_answers.read()["attempt_answers"]
+
+    def get(self, attempt_id: str) -> dict[str, Any] | None:
+        return next((a for a in self._all() if a["id"] == attempt_id), None)
+
+    def get_owned(self, attempt_id: str, student_id: str) -> dict[str, Any]:
+        """Fetch an attempt, refusing one that belongs to another student."""
+        attempt = self.get(attempt_id)
+        if attempt is None or attempt.get("student_id") != student_id:
+            raise AttemptError("المحاولة غير موجودة.")
+        return attempt
+
+    def attempts_for_student(
+        self, student_id: str, *, exam_id: str = ""
+    ) -> list[dict[str, Any]]:
+        rows = [
+            a
+            for a in self._all()
+            if a.get("student_id") == student_id and (not exam_id or a["exam_id"] == exam_id)
+        ]
+        return sorted(rows, key=lambda a: int(a.get("attempt_number", 0)))
+
+    def attempts_for_exam(self, exam_id: str) -> list[dict[str, Any]]:
+        return [a for a in self._all() if a["exam_id"] == exam_id]
+
+    def all_attempts(self, *, status: str = "", search: str = "") -> list[dict[str, Any]]:
+        rows = self._all()
+        if status:
+            rows = [a for a in rows if a.get("status") == status]
+        text = (search or "").strip().lower()
+        if text:
+            rows = [
+                a
+                for a in rows
+                if text in str(a.get("exam_id", "")).lower()
+                or text in str(a.get("student_id", "")).lower()
+                or text in str(a.get("id", "")).lower()
+            ]
+        return sorted(rows, key=lambda a: a.get("started_at") or "", reverse=True)
+
+    def answers_for(self, attempt_id: str) -> list[dict[str, Any]]:
+        return [a for a in self._all_answers() if a["attempt_id"] == attempt_id]
+
+    # --- counting / limits -------------------------------------------------
+    def _counting_attempts(self, exam: dict[str, Any], student_id: str) -> list[dict[str, Any]]:
+        rows = self.attempts_for_student(student_id, exam_id=exam["id"])
+        if exam.get("count_abandoned_attempts", True):
+            return rows
+        return [a for a in rows if a.get("status") in (STATUS_IN_PROGRESS, STATUS_SUBMITTED)]
+
+    def remaining_attempts(self, exam: dict[str, Any], student_id: str) -> int | None:
+        """Remaining attempts, or ``None`` when unlimited."""
+        limit = int(exam.get("max_attempts", 1) or 0)
+        if limit == 0:
+            return None
+        used = len(self._counting_attempts(exam, student_id))
+        return max(0, limit - used)
+
+    def active_attempt(self, exam_id: str, student_id: str) -> dict[str, Any] | None:
+        for attempt in reversed(self.attempts_for_student(student_id, exam_id=exam_id)):
+            if attempt.get("status") == STATUS_IN_PROGRESS:
+                return attempt
+        return None
+
+    # --- starting ----------------------------------------------------------
+    def start(self, exam_id: str, student_id: str, *, actor: str = "system") -> dict[str, Any]:
+        exam = self._exams.get(exam_id)
+        if exam is None:
+            raise AttemptError(f"الاختبار {exam_id} غير موجود.")
+        if not self._exams.is_visible_to_students(exam):
+            raise AttemptError("الاختبار غير متاح حالياً.")
+
+        allowed, reason = self._exams.can_start(exam)
+        if not allowed:
+            raise AttemptError(reason)
+
+        # Resume an existing in-progress attempt instead of burning a new one.
+        existing = self.active_attempt(exam_id, student_id)
+        if existing is not None:
+            return existing
+
+        if not self._exams.questions_for(exam_id):
+            raise AttemptError("الاختبار لا يحتوي على أسئلة.")
+
+        limit = int(exam.get("max_attempts", 1) or 0)
+        now = _now()
+        expires_at = ""
+        duration = int(exam.get("duration_minutes", 0) or 0)
+        if duration > 0:
+            expires_at = (now + timedelta(minutes=duration)).replace(
+                microsecond=0
+            ).isoformat().replace("+00:00", "Z")
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            rows = document["attempts"]
+            # Re-count inside the transaction so a concurrent start cannot pass.
+            counting = [
+                a
+                for a in rows
+                if a["exam_id"] == exam_id
+                and a["student_id"] == student_id
+                and (
+                    exam.get("count_abandoned_attempts", True)
+                    or a.get("status") in (STATUS_IN_PROGRESS, STATUS_SUBMITTED)
+                )
+            ]
+            if limit and len(counting) >= limit:
+                raise AttemptError("استنفدت عدد المحاولات المسموح لهذا الاختبار.")
+            if any(a["exam_id"] == exam_id and a["student_id"] == student_id
+                   and a["status"] == STATUS_IN_PROGRESS for a in rows):
+                raise AttemptError("لديك محاولة جارية بالفعل.")
+
+            number = len(
+                [a for a in rows if a["exam_id"] == exam_id and a["student_id"] == student_id]
+            ) + 1
+            document["counter"] = int(document.get("counter", 0)) + 1
+            attempt = {
+                "id": self._next_id(document["counter"]),
+                "exam_id": exam_id,
+                "student_id": student_id,
+                "attempt_number": number,
+                "status": STATUS_IN_PROGRESS,
+                "question_version": int(exam.get("question_version", 0)),
+                "started_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "submitted_at": None,
+                "expires_at": expires_at,
+                "score": 0,
+                "total_score": 0,
+                "percentage": 0.0,
+                "duration_seconds": 0,
+                "correct_count": 0,
+                "wrong_count": 0,
+                "unanswered_count": 0,
+            }
+            rows.append(attempt)
+            return attempt
+
+        try:
+            attempt = self._storage.attempts.update(_mutate)
+        except AttemptError:
+            raise
+        self._audit.record(
+            "attempt.started",
+            actor=actor,
+            message=f"بدء المحاولة {attempt['id']} للاختبار {exam_id}",
+            attempt_id=attempt["id"],
+            exam_id=exam_id,
+            student_id=student_id,
+        )
+        return attempt
+
+    # --- answering ---------------------------------------------------------
+    def _assert_open(self, attempt: dict[str, Any]) -> None:
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            raise AttemptError("المحاولة مُسلَّمة بالفعل.")
+        expires = _parse_instant(attempt.get("expires_at"))
+        if expires and _now() > expires:
+            # Time is up: close it out before rejecting the write.
+            self._finalize(attempt["id"], status=STATUS_EXPIRED)
+            raise AttemptError("انتهى وقت الاختبار وتم التسليم تلقائياً.")
+
+    def save_answer(
+        self,
+        attempt_id: str,
+        student_id: str,
+        question_id: str,
+        selected_option: int,
+        *,
+        actor: str = "system",
+    ) -> dict[str, Any]:
+        attempt = self.get_owned(attempt_id, student_id)
+        self._assert_open(attempt)
+
+        rows = self._exams.questions_for(attempt["exam_id"], int(attempt["question_version"]))
+        question = next((q for q in rows if q["question_id"] == question_id), None)
+        if question is None:
+            raise AttemptError("السؤال ليس ضمن هذه المحاولة.")
+        options = list(question.get("options_snapshot") or [])
+        try:
+            selected = int(selected_option)
+        except (TypeError, ValueError) as exc:
+            raise AttemptError("خيار غير صالح.") from exc
+        if not 0 <= selected < len(options):
+            raise AttemptError("الخيار خارج نطاق الأسئلة.")
+
+        is_correct = selected == int(question["correct_answer_snapshot"])
+        now = utc_now_iso()
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for answer in document["attempt_answers"]:
+                if answer["attempt_id"] == attempt_id and answer["question_id"] == question_id:
+                    answer.update(
+                        {
+                            "selected_option": selected,
+                            "is_correct": is_correct,
+                            "answered_at": now,
+                        }
+                    )
+                    return answer
+            document["counter"] = int(document.get("counter", 0)) + 1
+            answer = {
+                "id": f"AN{document['counter']:06d}",
+                "attempt_id": attempt_id,
+                "exam_question_id": question["id"],
+                "question_id": question_id,
+                "selected_option": selected,
+                "is_correct": is_correct,
+                "awarded_points": 0,
+                "answered_at": now,
+            }
+            document["attempt_answers"].append(answer)
+            return answer
+
+        return self._storage.attempt_answers.update(_mutate)
+
+    # --- submitting / grading ---------------------------------------------
+    def submit(self, attempt_id: str, student_id: str, *, actor: str = "system") -> dict[str, Any]:
+        attempt = self.get_owned(attempt_id, student_id)
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            raise AttemptError("المحاولة مُسلَّمة بالفعل.")
+        return self._finalize(attempt_id, status=STATUS_SUBMITTED)
+
+    def _finalize(self, attempt_id: str, *, status: str = STATUS_SUBMITTED) -> dict[str, Any]:
+        attempt = self.get(attempt_id)
+        if attempt is None:
+            raise AttemptError("المحاولة غير موجودة.")
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            return attempt
+
+        rows = self._exams.questions_for(
+            attempt["exam_id"], int(attempt.get("question_version", 0))
+        )
+        answers = {a["question_id"]: a for a in self.answers_for(attempt_id)}
+
+        correct = wrong = unanswered = 0
+        score = 0
+        for row in rows:
+            points = int(row.get("points", 1) or 1)
+            answer = answers.get(row["question_id"])
+            if answer is None:
+                unanswered += 1
+                continue
+            if answer.get("is_correct"):
+                correct += 1
+                score += points
+            else:
+                wrong += 1
+
+        total = sum(int(r.get("points", 1) or 1) for r in rows) or 1
+        percentage = round(score / total * 100, 1)
+
+        started = _parse_instant(attempt.get("started_at"))
+        now = _now()
+        duration = int((now - started).total_seconds()) if started else 0
+        if duration < 0:
+            duration = 0
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for item in document["attempts"]:
+                if item["id"] == attempt_id and item.get("status") == STATUS_IN_PROGRESS:
+                    item.update(
+                        {
+                            "status": status,
+                            "submitted_at": now.replace(microsecond=0)
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                            "score": score,
+                            "total_score": total,
+                            "percentage": percentage,
+                            "duration_seconds": duration,
+                            "correct_count": correct,
+                            "wrong_count": wrong,
+                            "unanswered_count": unanswered,
+                        }
+                    )
+                    return item
+            return attempt
+
+        result = self._storage.attempts.update(_mutate)
+
+        def _award(answers_doc: dict[str, Any]) -> None:
+            for answer in answers_doc["attempt_answers"]:
+                if answer["attempt_id"] == attempt_id:
+                    row = next(
+                        (r for r in rows if r["question_id"] == answer["question_id"]), None
+                    )
+                    answer["awarded_points"] = (
+                        int(row.get("points", 1) or 1) if answer.get("is_correct") else 0
+                    )
+
+        self._storage.attempt_answers.update(_award)
+        self._audit.record(
+            "attempt.submitted",
+            actor="system",
+            message=f"تسليم المحاولة {attempt_id} ({percentage}%)",
+            attempt_id=attempt_id,
+            exam_id=attempt["exam_id"],
+            student_id=attempt["student_id"],
+            status=status,
+        )
+        return result
+
+    def sweep_expired(self) -> int:
+        """Auto-submit every attempt whose server-side window has passed."""
+        closed = 0
+        for attempt in self._all():
+            if attempt.get("status") != STATUS_IN_PROGRESS:
+                continue
+            expires = _parse_instant(attempt.get("expires_at"))
+            if expires and _now() > expires:
+                self._finalize(attempt["id"], status=STATUS_EXPIRED)
+                closed += 1
+        return closed
+
+    # --- reading results ---------------------------------------------------
+    def student_state(self, exam: dict[str, Any], student_id: str) -> dict[str, Any]:
+        """Per-student view of one exam (new/not_started/in_progress/completed/...)."""
+        attempts = self.attempts_for_student(student_id, exam_id=exam["id"])
+        submitted = [a for a in attempts if a.get("status") in (STATUS_SUBMITTED, STATUS_EXPIRED)]
+        active = self.active_attempt(exam["id"], student_id)
+        remaining = self.remaining_attempts(exam, student_id)
+        viewed = self._viewed(exam["id"], student_id)
+
+        if active is not None:
+            label = "in_progress"
+        elif submitted:
+            if remaining == 0:
+                label = "attempt_limit_reached"
+            elif remaining is not None and remaining > 0:
+                label = "available_again"
+            else:
+                label = "completed"
+        elif viewed:
+            label = "not_started"
+        else:
+            label = "new"
+
+        best = max((float(a.get("percentage") or 0) for a in submitted), default=None)
+        last = float(submitted[-1].get("percentage") or 0) if submitted else None
+        return {
+            "label": label,
+            "attempts_used": len(attempts),
+            "attempts_submitted": len(submitted),
+            "remaining_attempts": remaining,
+            "best_percentage": best,
+            "last_percentage": last,
+            "active_attempt_id": active["id"] if active else None,
+            "last_attempt_id": submitted[-1]["id"] if submitted else None,
+        }
+
+    # --- viewed state ------------------------------------------------------
+    def _viewed(self, exam_id: str, student_id: str) -> bool:
+        return any(
+            s["exam_id"] == exam_id and s["student_id"] == student_id
+            for s in self._storage.student_exam_state.read()["states"]
+        )
+
+    def mark_viewed(self, exam_id: str, student_id: str) -> dict[str, Any]:
+        now = utc_now_iso()
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for state in document["states"]:
+                if state["exam_id"] == exam_id and state["student_id"] == student_id:
+                    state["last_viewed_at"] = now
+                    state["viewed"] = True
+                    return state
+            state = {
+                "id": f"SV{len(document['states']) + 1:06d}",
+                "exam_id": exam_id,
+                "student_id": student_id,
+                "viewed": True,
+                "first_viewed_at": now,
+                "last_viewed_at": now,
+            }
+            document["states"].append(state)
+            return state
+
+        return self._storage.student_exam_state.update(_mutate)
+
+    # --- review ------------------------------------------------------------
+    def review(self, attempt_id: str, student_id: str) -> dict[str, Any]:
+        """Per-question review of an attempt; only for its owner and only once
+        the attempt is finished and the exam allows showing solutions."""
+        attempt = self.get_owned(attempt_id, student_id)
+        if attempt.get("status") == STATUS_IN_PROGRESS:
+            raise AttemptError("لا يمكن مراجعة محاولة لم تُسلَّم بعد.")
+
+        exam = self._exams.get(attempt["exam_id"]) or {}
+        rows = self._exams.questions_for(
+            attempt["exam_id"], int(attempt.get("question_version", 0))
+        )
+        answers = {a["question_id"]: a for a in self.answers_for(attempt_id)}
+        show_solutions = bool(exam.get("show_solutions_after_submit", True))
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            answer = answers.get(row["question_id"])
+            selected = answer.get("selected_option") if answer else None
+            item = {
+                "question_id": row["question_id"],
+                "question": row["question_snapshot"],
+                "options": list(row.get("options_snapshot") or []),
+                "selected_option": selected,
+                "is_correct": bool(answer.get("is_correct")) if answer else False,
+                "answered": answer is not None,
+            }
+            if show_solutions:
+                item["correct_option_id"] = int(row["correct_answer_snapshot"])
+                item["explanation"] = row.get("explanation_snapshot", "")
+            items.append(item)
+
+        return {
+            "attempt": attempt,
+            "exam": {"id": exam.get("id"), "title": exam.get("title", ""),
+                     "show_solutions": show_solutions},
+            "questions": items,
+        }
+
+    # --- admin reset -------------------------------------------------------
+    def reset_student_attempts(
+        self, exam_id: str, student_id: str, *, actor: str = "system"
+    ) -> int:
+        """Administrative reset: delete this student's attempts for one exam.
+
+        Recorded in the audit log because it changes a student's result history.
+        """
+        removed = [
+            a["id"]
+            for a in self._all()
+            if a["exam_id"] == exam_id and a["student_id"] == student_id
+        ]
+
+        def _mutate(document: dict[str, Any]) -> int:
+            before = len(document["attempts"])
+            document["attempts"] = [
+                a
+                for a in document["attempts"]
+                if not (a["exam_id"] == exam_id and a["student_id"] == student_id)
+            ]
+            return before - len(document["attempts"])
+
+        count = self._storage.attempts.update(_mutate)
+
+        def _clear_answers(document: dict[str, Any]) -> None:
+            document["attempt_answers"] = [
+                a for a in document["attempt_answers"] if a["attempt_id"] not in removed
+            ]
+
+        self._storage.attempt_answers.update(_clear_answers)
+        self._audit.record(
+            "attempt.reset",
+            actor=actor,
+            level="warning",
+            message=f"إعادة ضبط محاولات الطالب {student_id} في الاختبار {exam_id}",
+            exam_id=exam_id,
+            student_id=student_id,
+        )
+        return count

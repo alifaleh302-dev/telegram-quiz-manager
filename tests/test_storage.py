@@ -100,6 +100,9 @@ def test_storage_exposes_all_collections(tmp_path: Path) -> None:
     assert set(storage.all_stores()) == {
         "questions", "channels", "schedules", "history", "settings", "users",
         "secrets", "audit_log", "poll_results", "poll_answers", "userbot_accounts",
+        # Exam platform collections (added with the student portal).
+        "students", "exams", "exam_questions", "attempts", "attempt_answers",
+        "student_exam_state", "notifications", "exam_admin_logs",
     }
 
 
