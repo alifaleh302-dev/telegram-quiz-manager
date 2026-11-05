@@ -534,3 +534,83 @@ def test_nav_shows_exam_section_for_admin(exam_client) -> None:
     _login(exam_client)
     page = exam_client.get("/")
     assert "منصة الاختبارات" in page.text
+
+
+# --- bot Mini App URL resolution ------------------------------------------
+
+class _FakeMenuButton:
+    def __init__(self, url: str = "") -> None:
+        self.web_app = type("WA", (), {"url": url})()
+
+
+class _FakeBot:
+    def __init__(self, url: str = "") -> None:
+        self._url = url
+        self.set_calls: list[str] = []
+
+    async def get_chat_menu_button(self) -> _FakeMenuButton:
+        return _FakeMenuButton(self._url)
+
+    async def set_chat_menu_button(self, menu_button=None) -> None:
+        self.set_calls.append(menu_button.web_app.url)
+
+
+class _FakeApp:
+    def __init__(self, url: str = "") -> None:
+        self.bot = _FakeBot(url)
+
+
+def _bot_manager():
+    from app.telegram.bot import BotManager
+
+    return BotManager({}, secret_store=None)
+
+
+def test_mini_app_url_prefers_setting(monkeypatch) -> None:
+    import asyncio
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mini_app_url", "https://quiz.example.com/")
+    monkeypatch.setattr(settings, "telegram_webhook_url", "")
+    url = asyncio.run(_bot_manager()._resolve_mini_app_url(_FakeApp()))
+    assert url == "https://quiz.example.com/app"
+
+
+def test_mini_app_url_falls_back_to_webhook_origin(monkeypatch) -> None:
+    import asyncio
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mini_app_url", "")
+    monkeypatch.setattr(
+        settings, "telegram_webhook_url", "https://prod.example.com/telegram/hook"
+    )
+    url = asyncio.run(_bot_manager()._resolve_mini_app_url(_FakeApp()))
+    assert url == "https://prod.example.com/app"
+
+
+def test_mini_app_url_falls_back_to_existing_menu_button(monkeypatch) -> None:
+    import asyncio
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mini_app_url", "")
+    monkeypatch.setattr(settings, "telegram_webhook_url", "")
+    app = _FakeApp("https://live.example.com/app")
+    url = asyncio.run(_bot_manager()._resolve_mini_app_url(app))
+    assert url == "https://live.example.com/app"
+
+
+def test_mini_app_url_empty_when_nothing_known(monkeypatch) -> None:
+    import asyncio
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "mini_app_url", "")
+    monkeypatch.setattr(settings, "telegram_webhook_url", "")
+    assert asyncio.run(_bot_manager()._resolve_mini_app_url(_FakeApp(""))) == ""

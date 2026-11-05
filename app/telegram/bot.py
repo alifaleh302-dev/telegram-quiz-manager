@@ -118,19 +118,46 @@ class BotManager:
         self._token = ""
 
     # --- Mini App menu -----------------------------------------------------
+    async def _resolve_mini_app_url(self, application: Any) -> str:
+        """Resolve the public Mini App URL, preferring explicit configuration.
+
+        Order: ``MINI_APP_URL`` setting → the webhook origin → whatever URL the
+        bot's menu button already points at. The last two keep a deploy that
+        forgot the env var working, instead of overwriting a good menu button.
+        """
+        from app.core.config import get_settings
+
+        config = get_settings()
+        base = (config.mini_app_url or "").strip().rstrip("/")
+        if base.startswith("https://"):
+            return f"{base}/app"
+        hook = (config.telegram_webhook_url or "").strip().rstrip("/")
+        if hook.startswith("https://"):
+            # A webhook URL looks like https://host/<path>; the app is served
+            # at the origin, not under the webhook path.
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(hook)
+            return f"{parts.scheme}://{parts.netloc}/app"
+        try:
+            current = await application.bot.get_chat_menu_button()
+            url = getattr(getattr(current, "web_app", None), "url", "") or ""
+            if url.startswith("https://"):
+                return url.rstrip("/")
+        except Exception:  # noqa: BLE001 - best effort only
+            pass
+        return ""
+
     async def _register_menu_button(self, application: Any) -> None:
         """Point Telegram's menu button at the Student Mini App.
 
         Best-effort: a bot whose owner has not configured a public URL should
         still start and serve the dashboard, so any failure is only logged.
         """
-        from app.core.config import get_settings
-
-        base = (get_settings().mini_app_url or "").strip().rstrip("/")
-        if not base.startswith("https://"):
-            logger.info("mini_app_url not set (https); skipping Mini App menu button.")
+        url = await self._resolve_mini_app_url(application)
+        if not url:
+            logger.info("no public Mini App URL resolved; skipping menu button.")
             return
-        url = f"{base}/app"
         try:
             from telegram import MenuButtonWebApp, WebAppInfo
 
@@ -141,13 +168,12 @@ class BotManager:
         except Exception:  # noqa: BLE001 - never block startup on this
             logger.exception("failed to set the Mini App menu button")
 
-    async def _mini_app_url(self) -> str:
-        from app.core.config import get_settings
-
-        base = (get_settings().mini_app_url or "").strip().rstrip("/")
-        if base.startswith("https://"):
-            return f"{base}/app"
-        return ""
+    async def _mini_app_url(self, application: Any | None = None) -> str:
+        if application is None:
+            application = self._application
+        if application is None:
+            return ""
+        return await self._resolve_mini_app_url(application)
 
     async def _cmd_start(self, update: Any, context: Any) -> None:
         text = (
