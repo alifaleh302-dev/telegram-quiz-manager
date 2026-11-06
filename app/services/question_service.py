@@ -120,10 +120,12 @@ class QuestionService:
                 "question",
                 "options",
                 "correct_option_id",
+                "options_feedback",
                 "explanation",
                 "category",
                 "difficulty",
             )
+            if k in source
         }
         payload["status"] = "draft"
         payload["question"] = f"{source['question']} (نسخة)"

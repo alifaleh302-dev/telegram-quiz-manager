@@ -228,6 +228,9 @@ const SA = (() => {
         </div>
         <div class="sa-meta">
           <span><i class="bi bi-list-ol"></i> ${exam.question_count} سؤال</span>
+          ${exam.mode === 'practice'
+            ? '<span><i class="bi bi-mortarboard"></i> تمرين وتعلّم</span>'
+            : '<span><i class="bi bi-stopwatch"></i> اختبار رسمي</span>'}
           ${exam.duration_minutes ? `<span><i class="bi bi-clock"></i> ${exam.duration_minutes} دقيقة</span>` : ''}
           ${exam.category ? `<span><i class="bi bi-tag"></i> ${esc(exam.category)}</span>` : ''}
           ${exam.best_percentage !== null && exam.best_percentage !== undefined
@@ -337,7 +340,15 @@ const SA = (() => {
   // --- session -------------------------------------------------------------
   function openSession(data) {
     const questions = data.questions;
+    const isPractice = data.exam.mode === 'practice';
     const answers = {};
+    // Practice mode reveals each answer as it is picked; the per-question
+    // feedback is cached here (from the answer call, or from the payload for a
+    // resumed session) so repainting a question keeps its colouring.
+    const feedback = {};
+    // Questions with an answer request in flight: their options are frozen so a
+    // second tap cannot race the first.
+    const pending = new Set();
     // Resume at the last question the student answered, so reopening a session
     // lands where they stopped instead of at the first question.
     let index = 0;
@@ -345,6 +356,9 @@ const SA = (() => {
       if (q.selected_option !== null && q.selected_option !== undefined) {
         answers[q.question_id] = q.selected_option;
         index = i;
+      }
+      if (isPractice && typeof q.is_correct === 'boolean') {
+        feedback[q.question_id] = q;
       }
     });
 
@@ -389,24 +403,75 @@ const SA = (() => {
       counterEl.textContent = `السؤال ${index + 1} من ${questions.length}`;
       barEl.style.width = `${Math.round(((index + 1) / questions.length) * 100)}%`;
       body.innerHTML = `<div class="sa-question-text">${esc(q.question)}</div>`;
+      const revealed = isPractice ? feedback[q.question_id] : null;
+      const frozen = revealed || pending.has(q.question_id);
       q.options.forEach((option, optIndex) => {
-        const optionNode = el(`<button class="sa-option ${answers[q.question_id] === optIndex ? 'selected' : ''}">
+        let cls = '';
+        if (revealed) {
+          // After an answer in practice mode: the picked option is coloured by
+          // correctness and the right one is always shown in green.
+          if (optIndex === revealed.correct_option_id) cls = 'correct';
+          else if (optIndex === answers[q.question_id]) cls = 'wrong';
+        } else if (answers[q.question_id] === optIndex) {
+          cls = 'selected';
+        }
+        const optionNode = el(`<button class="sa-option ${cls}">
           <span class="key">${String.fromCharCode(65 + optIndex)}</span>
           <span>${esc(option)}</span></button>`);
-        optionNode.addEventListener('click', () => {
-          answers[q.question_id] = optIndex;
-          api(`/api/student/attempts/${data.attempt.id}/answers`, {
-            method: 'POST', write: true,
-            body: { question_id: q.question_id, selected_option: optIndex },
-          }).catch((error) => alertMsg(error.message));
-          paint();
-        });
+        if (!frozen) {
+          optionNode.addEventListener('click', () => chooseOption(q, optIndex));
+        }
         body.appendChild(optionNode);
+        // Per-option feedback sits under the exact option it explains.
+        if (revealed && revealed.options_feedback && revealed.options_feedback[optIndex]) {
+          const fb = el(`<p class="sa-option-feedback ${optIndex === revealed.correct_option_id ? 'ok' : 'no'}">
+            <i class="bi bi-${optIndex === revealed.correct_option_id ? 'check-circle-fill' : 'x-circle-fill'}"></i>
+            ${esc(revealed.options_feedback[optIndex])}</p>`);
+          body.appendChild(fb);
+        }
       });
+      if (revealed && revealed.explanation) {
+        body.appendChild(el(`<div class="sa-explanation">
+          <div class="sa-explanation-title"><i class="bi bi-lightbulb"></i> الشرح</div>
+          <p>${esc(revealed.explanation)}</p></div>`));
+      }
+      // After answering, offer an explicit way forward (the swipe/edge arrows
+      // still work, but a button is clearer in a study flow).
+      if (revealed && index < questions.length - 1) {
+        const next = el(`<button class="sa-btn sa-next-btn">
+          السؤال التالي <i class="bi bi-arrow-left"></i></button>`);
+        next.addEventListener('click', () => move(1));
+        body.appendChild(next);
+      }
       const first = index === 0;
       const last = index === questions.length - 1;
       sideNavEl.classList.toggle('hide-prev', first);
       sideNavEl.classList.toggle('hide-next', last);
+    }
+
+    // A single tap answers in practice mode: the result is shown immediately
+    // and the pick is locked (no second guess, so the feedback stays honest).
+    function chooseOption(q, optIndex) {
+      if (pending.has(q.question_id)) return;
+      pending.add(q.question_id);
+      answers[q.question_id] = optIndex;
+      paint();
+      api(`/api/student/attempts/${data.attempt.id}/answers`, {
+        method: 'POST', write: true,
+        body: { question_id: q.question_id, selected_option: optIndex },
+      }).then((res) => {
+        if (res && typeof res.is_correct === 'boolean') {
+          feedback[q.question_id] = {
+            is_correct: res.is_correct,
+            correct_option_id: res.correct_option_id,
+            options_feedback: res.options_feedback || [],
+            explanation: res.explanation || '',
+          };
+        }
+      }).catch((error) => alertMsg(error.message)).finally(() => {
+        pending.delete(q.question_id);
+        paint();
+      });
     }
 
     function move(delta) {
@@ -602,7 +667,10 @@ const SA = (() => {
     document.getElementById('saSubmit').addEventListener('click', () => confirmSubmit(attemptId, answers, questions));
     paint();
 
-    if (!hasTimer) {
+    if (isPractice) {
+      // Practice is untimed by design; there is nothing to count down.
+      timerEl.hidden = true;
+    } else if (!hasTimer) {
       timerEl.textContent = '∞';
     } else if (data.attempt.paused) {
       // Reopened a session that was paused when the student last left: the
@@ -690,8 +758,15 @@ const SA = (() => {
           if (q.correct_option_id !== undefined && optIndex === q.correct_option_id) cls = 'correct';
           else if (q.selected_option === optIndex) cls = 'wrong';
           card.appendChild(el(`<div class="sa-option ${cls}"><span class="key">${String.fromCharCode(65 + optIndex)}</span><span>${esc(option)}</span></div>`));
+          if (q.options_feedback && q.options_feedback[optIndex]) {
+            card.appendChild(el(`<p class="sa-option-feedback ${optIndex === q.correct_option_id ? 'ok' : 'no'}">
+              <i class="bi bi-${optIndex === q.correct_option_id ? 'check-circle-fill' : 'x-circle-fill'}"></i>
+              ${esc(q.options_feedback[optIndex])}</p>`));
+          }
         });
-        if (q.explanation) card.appendChild(el(`<p class="sa-note" style="margin-top:8px"><i class="bi bi-info-circle"></i> ${esc(q.explanation)}</p>`));
+        if (q.explanation) card.appendChild(el(`<div class="sa-explanation">
+          <div class="sa-explanation-title"><i class="bi bi-lightbulb"></i> الشرح</div>
+          <p>${esc(q.explanation)}</p></div>`));
         wrap.appendChild(card);
       });
       const back = el('<button class="sa-btn secondary">رجوع</button>');

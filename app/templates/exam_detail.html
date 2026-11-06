@@ -66,6 +66,7 @@
         <dl class="schedule-meta">
           <div><dt>المعرّف</dt><dd><code>{{ exam.id }}</code></dd></div>
           <div><dt>الحالة</dt><dd>{{ exam.status }} — {{ exam.effective_state }}</dd></div>
+          <div><dt>النمط</dt><dd>{{ 'تمرين وتعلّم' if exam.mode == 'practice' else 'اختبار رسمي' }}</dd></div>
           <div><dt>الإتاحة</dt><dd>{{ 'نافذة زمنية' if exam.access_mode == 'scheduled' else 'دائماً' }}</dd></div>
           <div><dt>من</dt><dd>{{ exam.starts_at or '—' }}</dd></div>
           <div><dt>إلى</dt><dd>{{ exam.ends_at or '—' }}</dd></div>

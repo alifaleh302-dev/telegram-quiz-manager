@@ -242,7 +242,8 @@ code { color: #a5b4fc; background: rgba(99, 102, 241, .1); padding: 1px 6px; bor
 /* ---------- Editor ---------- */
 .editor-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); gap: 22px; }
 .editor-layout > .panel { margin-bottom: 0; }
-.option-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.option-row { margin-bottom: 12px; }
+.option-main { display: flex; align-items: center; gap: 10px; }
 .option-row .correct-pick {
   width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%;
   border: 2px solid var(--border-soft); background: transparent; color: var(--text-muted);
@@ -251,7 +252,8 @@ code { color: #a5b4fc; background: rgba(99, 102, 241, .1); padding: 1px 6px; bor
 .option-row .correct-pick.selected {
   border-color: var(--success); background: rgba(34, 197, 94, .16); color: #86efac;
 }
-.option-row .form-control { flex: 1; }
+.option-main .form-control { flex: 1; }
+.option-feedback-input { margin-top: 6px; font-size: .82rem; }
 .req { color: var(--danger); }
 .hint { color: var(--text-muted); font-size: .8rem; font-weight: 400; }
 

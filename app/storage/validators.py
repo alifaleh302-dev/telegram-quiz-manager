@@ -19,6 +19,10 @@ SELECTION_MODES = ("sequential", "random", "category")
 # --- Exam platform ---------------------------------------------------------
 EXAM_STATUSES = ("draft", "scheduled", "published", "closed", "archived")
 EXAM_ACCESS_MODES = ("always", "scheduled")
+# ``practice`` reveals the answer and per-option feedback the moment the student
+# picks an option (study/self-check); ``timed`` hides everything until the
+# attempt is submitted (a real assessment).
+EXAM_MODES = ("practice", "timed")
 ATTEMPT_STATUSES = ("in_progress", "submitted", "expired", "abandoned")
 NOTIFICATION_TYPES = (
     "exam_published",
@@ -89,6 +93,7 @@ def validate_question_payload(
         "question": question,
         "options": options,
         "correct_option_id": correct_int,
+        "options_feedback": _clean_feedback(payload.get("options_feedback"), len(options)),
         "explanation": _clean_text(
             payload.get("explanation"), "الشرح", max_length=500, required=False
         ),
@@ -99,6 +104,33 @@ def validate_question_payload(
         "difficulty": difficulty,
         "status": status,
     }
+
+
+def _clean_feedback(value: Any, option_count: int) -> list[str]:
+    """Normalize per-option feedback into a list aligned with the options.
+
+    The admin form posts one entry per option (blank when the author left it
+    empty); a hand-written JSON import may post fewer. Both are accepted and the
+    result is always padded/truncated to ``option_count`` so index ``i`` always
+    describes option ``i``.
+    """
+    if value is None:
+        raw: list[Any] = []
+    elif isinstance(value, list):
+        raw = value
+    else:
+        raise ValidationError("التغذية الراجعة للخيارات يجب أن تكون قائمة.")
+
+    cleaned: list[str] = []
+    for index, item in enumerate(raw):
+        cleaned.append(
+            _clean_text(
+                item, f"تغذية الخيار {index + 1}", max_length=500, required=False
+            )
+        )
+    if len(cleaned) < option_count:
+        cleaned.extend([""] * (option_count - len(cleaned)))
+    return cleaned[:option_count]
 
 
 def validate_channel_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -331,6 +363,10 @@ def validate_exam_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if access_mode not in EXAM_ACCESS_MODES:
         raise ValidationError("نمط الإتاحة يجب أن يكون always أو scheduled.")
 
+    mode = str(payload.get("mode") or "timed").strip().lower()
+    if mode not in EXAM_MODES:
+        raise ValidationError("نمط الاختبار يجب أن يكون practice أو timed.")
+
     timezone = _clean_text(
         payload.get("timezone"), "المنطقة الزمنية", max_length=64, required=False
     )
@@ -374,6 +410,10 @@ def validate_exam_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError(
             f"مدة الاختبار يجب أن تكون بين 0 و {MAX_DURATION_MINUTES} دقيقة (0 = بلا حد)."
         )
+    # A practice session reveals each answer as it is picked, so a countdown
+    # would be meaningless: force it untimed regardless of what was posted.
+    if mode == "practice":
+        duration = 0
 
     try:
         max_attempts = int(payload.get("max_attempts") if payload.get("max_attempts") not in (None, "") else 1)
@@ -401,6 +441,7 @@ def validate_exam_payload(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("cover_image"), "صورة الغلاف", max_length=500, required=False
         ),
         "access_mode": access_mode,
+        "mode": mode,
         "starts_at": starts_at,
         "ends_at": ends_at,
         "timezone": timezone or "Asia/Riyadh",

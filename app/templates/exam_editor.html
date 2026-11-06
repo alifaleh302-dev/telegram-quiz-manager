@@ -95,6 +95,15 @@
             <option value="scheduled" {{ 'selected' if access == 'scheduled' }}>نافذة زمنية محددة</option>
           </select>
         </div>
+        <div class="col-12">
+          <label class="form-label">نمط الاختبار</label>
+          {% set mode = exam.mode if exam else 'timed' %}
+          <select class="form-select" name="mode" id="examMode">
+            <option value="timed" {{ 'selected' if mode == 'timed' }}>اختبار رسمي (بمؤقّت، بلا نتائج أثناء الحل)</option>
+            <option value="practice" {{ 'selected' if mode == 'practice' }}>تمرين وتعلّم (بلا مؤقّت، نتيجة فورية لكل سؤال)</option>
+          </select>
+          <div class="form-text">في نمط التمرين تظهر النتيجة والتغذية الراجعة والشرح فور اختيار الإجابة، ولا يُحتسب وقت.</div>
+        </div>
         <div class="col-12" id="scheduleWindow" hidden>
           <label class="form-label">بداية الإتاحة</label>
           <div class="d-flex gap-2">

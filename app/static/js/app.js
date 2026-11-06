@@ -263,20 +263,33 @@ const TQM = (() => {
     if (!list) return;
     const form = document.getElementById('questionForm');
     let correctIndex = existing ? existing.correct_option_id : 0;
+    const existingFeedback = (existing && existing.options_feedback) || [];
+
+    function optionRowHtml(value, index) {
+      const feedback = (existingFeedback[index] || '').replace(/"/g, '&quot;');
+      return `
+        <div class="option-main">
+          <button type="button" class="correct-pick ${index === correctIndex ? 'selected' : ''}"
+                  title="تحديد كإجابة صحيحة">${String.fromCharCode(65 + index)}</button>
+          <input class="form-control option-input" value="${(value || '').replace(/"/g, '&quot;')}"
+                 placeholder="نص الخيار ${index + 1}" maxlength="100">
+          <button type="button" class="btn btn-outline-danger btn-sm remove-opt"><i class="bi bi-x"></i></button>
+        </div>
+        <input class="form-control option-feedback-input" value="${feedback}"
+               placeholder="تغذية راجعة لهذا الخيار (تظهر عند اختياره في نمط التمرين)" maxlength="500">`;
+    }
 
     function renderOptions() {
       const current = Array.from(list.querySelectorAll('.option-input')).map((i) => i.value);
+      const currentFb = Array.from(list.querySelectorAll('.option-feedback-input')).map((i) => i.value);
       const options = current.length ? current : (existing ? [...existing.options] : ['', '', '', '']);
       list.innerHTML = '';
       options.forEach((value, index) => {
         const row = document.createElement('div');
         row.className = 'option-row';
-        row.innerHTML = `
-          <button type="button" class="correct-pick ${index === correctIndex ? 'selected' : ''}"
-                  title="تحديد كإجابة صحيحة">${String.fromCharCode(65 + index)}</button>
-          <input class="form-control option-input" value="${value.replace(/"/g, '&quot;')}"
-                 placeholder="نص الخيار ${index + 1}" maxlength="100">
-          <button type="button" class="btn btn-outline-danger btn-sm remove-opt"><i class="bi bi-x"></i></button>`;
+        row.innerHTML = optionRowHtml(value, index);
+        // Keep any feedback the author already typed when the row is redrawn.
+        if (currentFb[index]) row.querySelector('.option-feedback-input').value = currentFb[index];
         row.querySelector('.correct-pick').addEventListener('click', () => {
           correctIndex = index;
           renderOptions();
@@ -322,9 +335,13 @@ const TQM = (() => {
       const row = document.createElement('div');
       row.className = 'option-row';
       row.innerHTML = `
-        <button type="button" class="correct-pick">${String.fromCharCode(65 + count)}</button>
-        <input class="form-control option-input" placeholder="نص الخيار ${count + 1}" maxlength="100">
-        <button type="button" class="btn btn-outline-danger btn-sm remove-opt"><i class="bi bi-x"></i></button>`;
+        <div class="option-main">
+          <button type="button" class="correct-pick">${String.fromCharCode(65 + count)}</button>
+          <input class="form-control option-input" placeholder="نص الخيار ${count + 1}" maxlength="100">
+          <button type="button" class="btn btn-outline-danger btn-sm remove-opt"><i class="bi bi-x"></i></button>
+        </div>
+        <input class="form-control option-feedback-input"
+               placeholder="تغذية راجعة لهذا الخيار (تظهر عند اختياره في نمط التمرين)" maxlength="500">`;
       list.appendChild(row);
       renderOptions();
     });
@@ -335,10 +352,13 @@ const TQM = (() => {
     form?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const options = Array.from(list.querySelectorAll('.option-input')).map((i) => i.value.trim());
+      const optionsFeedback = Array.from(list.querySelectorAll('.option-feedback-input'))
+        .map((i) => i.value.trim());
       const payload = {
         question: document.getElementById('questionText').value.trim(),
         options,
         correct_option_id: correctIndex,
+        options_feedback: optionsFeedback,
         explanation: document.getElementById('explanation').value.trim(),
         category: document.getElementById('category').value.trim() || 'General',
         difficulty: document.getElementById('difficulty').value,
@@ -1625,6 +1645,7 @@ const TQM = (() => {
         category: data.get('category') || 'General',
         cover_image: data.get('cover_image') || '',
         access_mode: data.get('access_mode') || 'always',
+        mode: data.get('mode') || 'timed',
         start_date: data.get('start_date') || '',
         start_time: data.get('start_time') || '',
         end_date: data.get('end_date') || '',

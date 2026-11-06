@@ -69,6 +69,7 @@ def _exam_card(
         "state": state,
         "status": exam.get("status"),
         "access_mode": exam.get("access_mode"),
+        "mode": exam.get("mode", "timed"),
         "question_count": question_count,
         "duration_minutes": exam.get("duration_minutes", 0),
         "max_attempts": exam.get("max_attempts", 1),
@@ -337,25 +338,37 @@ def _attempt_payload(attempt: dict[str, Any], services: Any, student_id: str) ->
         # Report the *effective* countdown, not the balance frozen at start, so
         # a reopened session resumes from the real time left.
         summary["remaining_seconds"] = services.attempts.time_left(attempt)
+    practice = exam.get("mode") == "practice"
+
+    def _question(row: dict[str, Any]) -> dict[str, Any]:
+        item = {
+            "question_id": row["question_id"],
+            "position": row["position"],
+            "question": row["question_snapshot"],
+            "options": list(row.get("options_snapshot") or []),
+            "selected_option": saved.get(row["question_id"]),
+        }
+        # A resumed practice session must keep showing the feedback for the
+        # questions already answered, otherwise the colours would vanish.
+        if practice and item["selected_option"] is not None:
+            correct = int(row["correct_answer_snapshot"])
+            item["is_correct"] = item["selected_option"] == correct
+            item["correct_option_id"] = correct
+            item["options_feedback"] = list(row.get("options_feedback_snapshot") or [])
+            item["explanation"] = row.get("explanation_snapshot", "")
+        return item
+
     return {
         "attempt": summary,
         "exam": {
             "id": exam.get("id"),
             "title": exam.get("title", ""),
+            "mode": exam.get("mode", "timed"),
             "duration_minutes": exam.get("duration_minutes", 0),
             "shuffle_questions": exam.get("shuffle_questions", False),
             "shuffle_options": exam.get("shuffle_options", False),
         },
-        "questions": [
-            {
-                "question_id": row["question_id"],
-                "position": row["position"],
-                "question": row["question_snapshot"],
-                "options": list(row.get("options_snapshot") or []),
-                "selected_option": saved.get(row["question_id"]),
-            }
-            for row in rows
-        ],
+        "questions": [_question(row) for row in rows],
     }
 
 
@@ -372,14 +385,38 @@ def student_save_answer(
         )
     except AttemptError as exc:
         raise ValidationError(str(exc)) from exc
-    exam_id = (services.attempts.get(attempt_id) or {}).get("exam_id", "")
+    attempt = services.attempts.get(attempt_id) or {}
+    exam_id = attempt.get("exam_id", "")
     services.activity.touch(
         ctx.id,
         activity.EVENT_ANSWER,
         exam_id=exam_id,
         question_id=payload.question_id,
     )
+    # Practice mode is the only place the client is told whether it was right,
+    # and only for the option just picked — the timed mode stays sealed until
+    # submit so it can never be mined for answers.
+    if (services.exams.get(exam_id) or {}).get("mode") == "practice":
+        return {"ok": True, **_practice_feedback(services, attempt, payload)}
     return {"ok": True}
+
+
+def _practice_feedback(
+    services: Any, attempt: dict[str, Any], payload: AnswerIn
+) -> dict[str, Any]:
+    rows = services.exams.questions_for(
+        attempt["exam_id"], int(attempt.get("question_version", 0))
+    )
+    row = next((r for r in rows if r["question_id"] == payload.question_id), None)
+    if row is None:
+        return {}
+    correct = int(row["correct_answer_snapshot"])
+    return {
+        "is_correct": int(payload.selected_option) == correct,
+        "correct_option_id": correct,
+        "options_feedback": list(row.get("options_feedback_snapshot") or []),
+        "explanation": row.get("explanation_snapshot", ""),
+    }
 
 
 @router.post("/attempts/{attempt_id}/pause")

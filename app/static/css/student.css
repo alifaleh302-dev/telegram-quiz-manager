@@ -263,6 +263,31 @@ body.student-app {
 .sa-option.selected .key { background: var(--sa-brand); color: #fff; border-color: transparent; }
 .sa-option.correct { border-color: var(--sa-success); background: var(--sa-success-soft); }
 .sa-option.wrong { border-color: var(--sa-danger); background: var(--sa-danger-soft); }
+.sa-option.correct .key { background: var(--sa-success); color: #fff; border-color: transparent; }
+.sa-option.wrong .key { background: var(--sa-danger); color: #fff; border-color: transparent; }
+
+/* Practice mode: per-option feedback directly under the option it explains. */
+.sa-option-feedback {
+  display: flex; align-items: flex-start; gap: 7px;
+  margin: 6px 4px 0; font-size: 0.8rem; line-height: 1.6;
+}
+.sa-option-feedback.ok { color: var(--sa-success); }
+.sa-option-feedback.no { color: var(--sa-danger); }
+.sa-option-feedback i { margin-top: 2px; flex: 0 0 auto; }
+
+/* The overall explanation of the question, shown after answering. */
+.sa-explanation {
+  margin-top: 14px; padding: 12px 14px; border-radius: 14px;
+  background: var(--sa-warning-soft); border: 1px solid var(--sa-warning);
+}
+.sa-explanation-title {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 800; font-size: 0.85rem; color: var(--sa-warning); margin-bottom: 4px;
+}
+.sa-explanation p { margin: 0; font-size: 0.85rem; line-height: 1.7; }
+
+/* A clear forward action once a practice answer has been revealed. */
+.sa-next-btn { margin-top: 14px; width: 100%; }
 
 .sa-nav-hint {
   display: flex; align-items: center; gap: 8px;

@@ -805,6 +805,9 @@ class ExamAttemptService:
             }
             if show_solutions:
                 item["correct_option_id"] = int(row["correct_answer_snapshot"])
+                item["options_feedback"] = list(
+                    row.get("options_feedback_snapshot") or []
+                )
                 item["explanation"] = row.get("explanation_snapshot", "")
             items.append(item)
 

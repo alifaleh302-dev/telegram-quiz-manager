@@ -1505,3 +1505,208 @@ def test_activity_endpoint_requires_a_grant(exam_client) -> None:
     )
     assert signed_in.status_code == 303
     assert exam_client.get("/api/admin/activity").status_code == 403
+
+
+# --- practice vs timed mode ------------------------------------------------
+
+PRACTICE_FEEDBACK = [
+    "غير صحيح؛ المكدس للبيانات المؤقتة.",
+    "إجابة صحيحة! الـ Heap للذاكرة الديناميكية.",
+    "غير صحيح؛ قسم البيانات للمتغيرات العامة.",
+    "غير صحيح؛ قسم النص للشفرة فقط.",
+]
+
+
+def _make_practice_exam(client: TestClient, csrf: str, *, mode: str = "practice") -> str:
+    created = client.post(
+        "/api/questions",
+        json={
+            "question": "ما الجزء المسؤول عن تخصيص الذاكرة ديناميكياً؟",
+            "options": ["Stack", "Heap", "Data section", "Text section"],
+            "correct_option_id": 1,
+            "options_feedback": PRACTICE_FEEDBACK,
+            "explanation": "التخصيص الديناميكي يتم في الـ Heap.",
+            "status": "ready",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code == 201, created.text
+    qid = created.json()["id"]
+    assert created.json()["options_feedback"] == PRACTICE_FEEDBACK
+
+    response = client.post(
+        "/api/admin/exams",
+        json={
+            "title": "تمرين الذاكرة",
+            "mode": mode,
+            "duration_minutes": 30,
+            "max_attempts": 0,
+            "question_ids": [qid],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 201, response.text
+    exam_id = response.json()["id"]
+    published = client.post(
+        f"/api/admin/exams/{exam_id}/publish", headers={"X-CSRF-Token": csrf}
+    )
+    assert published.status_code == 200, published.text
+    return exam_id
+
+
+def test_practice_mode_forces_untimed(exam_client) -> None:
+    """A practice exam can never carry a countdown, whatever was posted."""
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="practice")
+    exam = exam_client.get(f"/api/admin/exams/{exam_id}").json()["exam"]
+    assert exam["mode"] == "practice"
+    assert exam["duration_minutes"] == 0
+
+
+def test_practice_answer_returns_immediate_feedback(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="practice")
+    headers = _student_headers()
+
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.status_code == 200, started.text
+    payload = started.json()
+    assert payload["exam"]["mode"] == "practice"
+    # Nothing is revealed before the student answers, even in practice mode.
+    assert "correct_option_id" not in payload["questions"][0]
+
+    attempt_id = payload["attempt"]["id"]
+    qid = payload["questions"][0]["question_id"]
+
+    wrong = exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 0},
+        headers=headers,
+    )
+    assert wrong.status_code == 200, wrong.text
+    body = wrong.json()
+    assert body["is_correct"] is False
+    assert body["correct_option_id"] == 1
+    assert body["options_feedback"] == PRACTICE_FEEDBACK
+    assert body["explanation"]
+
+    right = exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 1},
+        headers=headers,
+    )
+    assert right.json()["is_correct"] is True
+
+
+def test_timed_answer_never_leaks_feedback(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="timed")
+    headers = _student_headers()
+
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    payload = started.json()
+    assert payload["exam"]["mode"] == "timed"
+    assert payload["exam"]["duration_minutes"] == 30
+
+    attempt_id = payload["attempt"]["id"]
+    qid = payload["questions"][0]["question_id"]
+    saved = exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 1},
+        headers=headers,
+    )
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body == {"ok": True}
+    assert "correct_option_id" not in body
+    assert "options_feedback" not in body
+
+
+def test_practice_resume_keeps_feedback(exam_client) -> None:
+    """Reopening an in-progress practice session keeps its colouring data."""
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="practice")
+    headers = _student_headers()
+
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    payload = started.json()
+    attempt_id = payload["attempt"]["id"]
+    qid = payload["questions"][0]["question_id"]
+    exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 0},
+        headers=headers,
+    )
+
+    reopened = exam_client.get(f"/api/student/attempts/{attempt_id}", headers=headers)
+    assert reopened.status_code == 200, reopened.text
+    question = reopened.json()["questions"][0]
+    assert question["selected_option"] == 0
+    assert question["is_correct"] is False
+    assert question["correct_option_id"] == 1
+    assert question["options_feedback"] == PRACTICE_FEEDBACK
+
+
+def test_review_includes_options_feedback(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="timed")
+    headers = _student_headers()
+
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    payload = started.json()
+    attempt_id = payload["attempt"]["id"]
+    qid = payload["questions"][0]["question_id"]
+    exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 0},
+        headers=headers,
+    )
+    exam_client.post(f"/api/student/attempts/{attempt_id}/submit", headers=headers)
+
+    review = exam_client.get(f"/api/student/attempts/{attempt_id}/review", headers=headers)
+    assert review.status_code == 200, review.text
+    question = review.json()["questions"][0]
+    assert question["options_feedback"] == PRACTICE_FEEDBACK
+    assert question["explanation"]
+
+
+def test_question_feedback_snapshot_survives_bank_edit(svc) -> None:
+    """A later bank edit must not rewrite an exam's frozen feedback."""
+    question = svc.questions.create(
+        {
+            "question": "س؟",
+            "options": ["أ", "ب"],
+            "correct_option_id": 0,
+            "options_feedback": ["صحيح", "خطأ"],
+            "status": "ready",
+        }
+    )
+    exam = svc.exams.create(
+        {"title": "اختبار", "mode": "practice", "status": "published"},
+        [question["id"]],
+    )
+    svc.questions.update(
+        question["id"], {**question, "options_feedback": ["محدث", "محدث"]}
+    )
+    row = svc.exams.questions_for(exam["id"])[0]
+    assert row["options_feedback_snapshot"] == ["صحيح", "خطأ"]
+
+
+def test_validate_question_pads_missing_feedback() -> None:
+    from app.storage.validators import validate_question_payload
+
+    data = validate_question_payload(
+        {
+            "question": "س؟",
+            "options": ["أ", "ب", "ج"],
+            "correct_option_id": 0,
+            "options_feedback": ["واحد"],
+            "status": "ready",
+        }
+    )
+    assert data["options_feedback"] == ["واحد", "", ""]
+    # A question with no feedback at all still aligns with its options.
+    plain = validate_question_payload(
+        {"question": "س؟", "options": ["أ", "ب"], "correct_option_id": 0}
+    )
+    assert plain["options_feedback"] == ["", ""]

@@ -310,6 +310,11 @@ class ExamService:
     def _snapshot_row(
         self, exam_id: str, question: dict[str, Any], position: int, version: int
     ) -> dict[str, Any]:
+        options = list(question["options"])
+        feedback = list(question.get("options_feedback") or [])
+        # Pad/truncate so feedback index always lines up with option index even
+        # for questions stored before this field existed.
+        feedback = (feedback + [""] * len(options))[: len(options)]
         return {
             "id": f"{exam_id}-V{version}-P{position + 1}",
             "exam_id": exam_id,
@@ -318,8 +323,9 @@ class ExamService:
             "position": position,
             "points": 1,
             "question_snapshot": question["question"],
-            "options_snapshot": list(question["options"]),
+            "options_snapshot": options,
             "correct_answer_snapshot": int(question["correct_option_id"]),
+            "options_feedback_snapshot": feedback,
             "explanation_snapshot": question.get("explanation", ""),
             "category_snapshot": question.get("category", ""),
             "difficulty_snapshot": question.get("difficulty", ""),

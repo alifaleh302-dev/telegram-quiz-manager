@@ -53,6 +53,7 @@ class ExamIn(BaseModel):
     category: str = "General"
     cover_image: str = ""
     access_mode: str = "always"
+    mode: str = "timed"
     # Either pre-combined instants or the separate date/time fields.
     starts_at: str = ""
     ends_at: str = ""

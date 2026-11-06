@@ -24,6 +24,7 @@ class QuestionIn(BaseModel):
     question: str
     options: list[str] = Field(default_factory=list)
     correct_option_id: int = 0
+    options_feedback: list[str] = Field(default_factory=list)
     explanation: str = ""
     category: str = "General"
     difficulty: str = "medium"
