@@ -1,106 +1,56 @@
 {% extends "base.html" %}
 {% block title %}تحليل الاختبارات — {{ app_name }}{% endblock %}
 {% block page_title %}تحليل الاختبارات{% endblock %}
-{% block page_subtitle %}مؤشرات أداء الطلاب وتوزيع الدرجات{% endblock %}
+{% block page_subtitle %}اختر اختباراً لعرض تحليله البياني المفصّل{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-sm btn-outline-light d-lg-none" type="button"
+        data-bs-toggle="offcanvas" data-bs-target="#examListOffcanvas"
+        aria-controls="examListOffcanvas" aria-label="قائمة الاختبارات">
+  <i class="bi bi-list"></i> الاختبارات
+</button>
+{% endblock %}
 
 {% block content %}
-<div class="stat-strip">
-  <span><strong>{{ totals.students }}</strong> طالب</span>
-  <span class="text-info"><strong>{{ totals.exams }}</strong> اختبار</span>
-  <span><strong>{{ totals.attempts }}</strong> محاولة</span>
-  <span class="text-success"><strong>{{ totals.completed }}</strong> مكتملة</span>
-  <span><strong>{{ totals.average }}%</strong> المتوسط</span>
-</div>
-<p class="hint mb-3">تُحتسب الإحصائيات على أساس <strong>أفضل نتيجة</strong> لكل طالب في كل اختبار ({{ totals.graded }} نتيجة معتمدة)، وليس على كل المحاولات.</p>
+<div class="ea-layout">
+  {# --- Sidebar (desktop) --- #}
+  <aside class="ea-sidebar d-none d-lg-flex">
+    <div class="ea-sidebar-head">
+      <h2><i class="bi bi-journal-check"></i> الاختبارات</h2>
+      <span class="badge text-bg-secondary">{{ exam_rows | length }}</span>
+    </div>
+    <div class="ea-exam-list" id="eaExamList">
+      {% include "partials/exam_analytics_list.html" %}
+    </div>
+  </aside>
 
-<div class="row g-3">
-  <div class="col-lg-6">
-    <div class="panel">
-      <div class="panel-header"><h2><i class="bi bi-bar-chart"></i> توزيع الدرجات</h2></div>
-      <div class="panel-body"><canvas id="scoreChart" height="220"></canvas></div>
-    </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="panel">
-      <div class="panel-header"><h2><i class="bi bi-trophy"></i> ملخص</h2></div>
-      <div class="panel-body">
-        <dl class="schedule-meta">
-          <div><dt>الأعلى</dt><dd>{{ totals.highest }}%</dd></div>
-          <div><dt>الأدنى</dt><dd>{{ totals.lowest }}%</dd></div>
-          <div><dt>المتوسط</dt><dd>{{ totals.average }}%</dd></div>
-          <div><dt>طلاب أنهوا اختباراً</dt><dd>{{ active_students }}</dd></div>
-        </dl>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="panel-header"><h2><i class="bi bi-list-columns"></i> أداء الاختبارات</h2></div>
-  <div class="panel-body">
-    {% if per_exam %}
-    <div class="table-responsive">
-      <table class="table table-hover align-middle">
-        <thead>
-          <tr>
-            <th>الاختبار</th>
-            <th>الأسئلة</th>
-            <th>المحاولات</th>
-            <th>المكتملة</th>
-            <th>طلاب مُقيَّمون</th>
-            <th>المتوسط</th>
-            <th>الأعلى</th>
-            <th>الأدنى</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for exam in per_exam %}
-          <tr>
-            <td><a href="/exams/{{ exam.id }}">{{ exam.title }}</a></td>
-            <td>{{ exam.questions }}</td>
-            <td>{{ exam.attempts }}</td>
-            <td>{{ exam.completed }}</td>
-            <td>{{ exam.students_graded }}</td>
-            <td>{{ exam.average }}%</td>
-            <td>{{ exam.highest }}%</td>
-            <td>{{ exam.lowest }}%</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+  {# --- Main detail area --- #}
+  <section class="ea-main" id="eaMain">
+    {% if active_exam %}
+      {% include "partials/exam_analytics_detail.html" %}
     {% else %}
-    <p class="empty-state py-4"><i class="bi bi-bar-chart"></i><br>لا توجد بيانات كافية بعد.</p>
+      {% include "partials/exam_analytics_overview.html" %}
     {% endif %}
+  </section>
+</div>
+
+{# --- Sidebar (mobile offcanvas) --- #}
+<div class="offcanvas offcanvas-start ea-offcanvas" tabindex="-1" id="examListOffcanvas"
+     aria-labelledby="examListOffcanvasLabel">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title" id="examListOffcanvasLabel">
+      <i class="bi bi-journal-check"></i> الاختبارات
+    </h5>
+    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="إغلاق"></button>
+  </div>
+  <div class="offcanvas-body ea-exam-list">
+    {% include "partials/exam_analytics_list.html" %}
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const ctx = document.getElementById('scoreChart');
-    if (!ctx) return;
-    const buckets = {{ buckets | tojson }};
-    new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: Object.keys(buckets),
-        datasets: [{
-          label: 'عدد المحاولات',
-          data: Object.values(buckets),
-          backgroundColor: 'rgba(99, 102, 241, 0.65)',
-          borderRadius: 8,
-        }],
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { beginAtZero: true, ticks: { precision: 0 } },
-        },
-      },
-    });
-  });
+  document.addEventListener('DOMContentLoaded', () => TQM.initExamAnalytics());
 </script>
 {% endblock %}

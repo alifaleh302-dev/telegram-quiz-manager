@@ -28,6 +28,10 @@ STATUS_IN_PROGRESS = "in_progress"
 STATUS_SUBMITTED = "submitted"
 STATUS_EXPIRED = "expired"
 
+# A score at or above this percentage counts as a pass. Exams carry no per-exam
+# pass mark, so analytics uses one shared, documented threshold.
+PASS_MARK = 50.0
+
 
 def _parse_instant(value: str | None) -> datetime | None:
     text = (value or "").strip()
@@ -407,6 +411,120 @@ class ExamAttemptService:
         return closed
 
     # --- reading results ---------------------------------------------------
+    def exam_analytics(self, exam_id: str) -> dict[str, Any]:
+        """Deep, exam-scoped analytics for the admin analytics page.
+
+        Every figure is built on each student's *best* submitted attempt, so a
+        repeat sitter neither inflates nor drags the aggregate. Per-question
+        difficulty is keyed by snapshot version, because an attempt is graded
+        against the version that was current when it started and a later edit
+        must not rewrite old results.
+        """
+        attempts = self.attempts_for_exam(exam_id)
+        submitted = [a for a in attempts if a.get("status") in (STATUS_SUBMITTED, STATUS_EXPIRED)]
+        best = {}
+        for attempt in submitted:
+            key = attempt["student_id"]
+            score = float(attempt.get("percentage") or 0)
+            if key not in best or score > float(best[key].get("percentage") or 0):
+                best[key] = attempt
+        best_rows = list(best.values())
+        scores = [float(a.get("percentage") or 0) for a in best_rows]
+
+        buckets = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
+        for score in scores:
+            if score <= 20:
+                buckets["0-20"] += 1
+            elif score <= 40:
+                buckets["21-40"] += 1
+            elif score <= 60:
+                buckets["41-60"] += 1
+            elif score <= 80:
+                buckets["61-80"] += 1
+            else:
+                buckets["81-100"] += 1
+
+        # Resolve answers back to the snapshot row they were graded against, so
+        # a question edited after an attempt still reports the old result.
+        snapshots = {
+            (int(r.get("version", 0)), r["question_id"]): r
+            for r in self._exams.question_rows(exam_id)
+        }
+        seen: dict[tuple[int, str], int] = {}
+        wrong: dict[tuple[int, str], int] = {}
+        unanswered: dict[tuple[int, str], int] = {}
+        for attempt in best_rows:
+            version = int(attempt.get("question_version", 0))
+            answered = {
+                a["question_id"]: a for a in self.answers_for(attempt["id"])
+            }
+            for row in self._exams.questions_for(exam_id, version):
+                key = (version, row["question_id"])
+                seen[key] = seen.get(key, 0) + 1
+                answer = answered.get(row["question_id"])
+                if answer is None:
+                    unanswered[key] = unanswered.get(key, 0) + 1
+                elif not answer.get("is_correct"):
+                    wrong[key] = wrong.get(key, 0) + 1
+
+        hardest = sorted(
+            (
+                {
+                    "question_id": key[1],
+                    "question": snapshots.get(key, {}).get("question_snapshot", key[1]),
+                    "options": list(snapshots.get(key, {}).get("options_snapshot") or []),
+                    "correct_option_id": int(
+                        snapshots.get(key, {}).get("correct_answer_snapshot", 0)
+                    ),
+                    "category": snapshots.get(key, {}).get("category_snapshot", ""),
+                    "difficulty": snapshots.get(key, {}).get("difficulty_snapshot", ""),
+                    "attempts": count,
+                    "wrong": wrong.get(key, 0),
+                    "unanswered": unanswered.get(key, 0),
+                    "wrong_rate": round(
+                        (wrong.get(key, 0) + unanswered.get(key, 0)) / count * 100, 1
+                    ),
+                }
+                for key, count in seen.items()
+            ),
+            key=lambda item: item["wrong_rate"],
+            reverse=True,
+        )
+
+        total_answers = sum(seen.values())
+        total_wrong = sum(wrong.values()) + sum(unanswered.values())
+        return {
+            "exam_id": exam_id,
+            "questions": self._exams.question_count(exam_id),
+            "attempts": len(attempts),
+            "completed": len(submitted),
+            "students_started": len({a["student_id"] for a in attempts}),
+            "students_graded": len(best_rows),
+            "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
+            "highest": round(max(scores), 1) if scores else 0.0,
+            "lowest": round(min(scores), 1) if scores else 0.0,
+            "median": round(sorted(scores)[len(scores) // 2], 1) if scores else 0.0,
+            "pass_rate": round(
+                sum(1 for s in scores if s >= PASS_MARK) / len(scores) * 100, 1
+            )
+            if scores
+            else 0.0,
+            "completion_rate": round(
+                len({a["student_id"] for a in submitted})
+                / max(1, len({a["student_id"] for a in attempts}))
+                * 100,
+                1,
+            )
+            if attempts
+            else 0.0,
+            "buckets": buckets,
+            "pass_mark": PASS_MARK,
+            "correct_rate": round((total_answers - total_wrong) / total_answers * 100, 1)
+            if total_answers
+            else 0.0,
+            "hardest_questions": hardest[:10],
+        }
+
     def student_state(self, exam: dict[str, Any], student_id: str) -> dict[str, Any]:
         """Per-student view of one exam (new/not_started/in_progress/completed/...)."""
         attempts = self.attempts_for_student(student_id, exam_id=exam["id"])

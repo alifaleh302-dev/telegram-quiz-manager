@@ -1361,6 +1361,112 @@ const TQM = (() => {
   }
 
   // --- exam platform (admin) ----------------------------------------------
+  function initExamAnalytics() {
+    const main = document.getElementById('eaMain');
+    const offcanvasEl = document.getElementById('examListOffcanvas');
+    if (!main) return;
+
+    const palette = {
+      grid: { color: 'rgba(148,163,184,0.12)' },
+      tick: { color: '#94a3b8' },
+      bar: 'rgba(99,102,241,0.65)',
+    };
+    const axis = () => ({
+      y: { beginAtZero: true, ticks: { precision: 0, color: '#94a3b8' }, grid: palette.grid },
+      x: { ticks: palette.tick, grid: palette.grid },
+    });
+
+    // Charts are described by a <script type="application/json"> island rather
+    // than inline JS: the partial is parsed inside the page body, before
+    // Chart.js loads, so running it there would throw on a full page load.
+    const renderCharts = (root) => {
+      if (!window.Chart) return;
+      (TQM._examCharts || []).forEach((c) => { try { c.destroy(); } catch (e) {} });
+      TQM._examCharts = [];
+      const mk = (id, cfg) => {
+        const el = root.querySelector('#' + id);
+        if (!el) return;
+        TQM._examCharts.push(new Chart(el, cfg));
+      };
+      const overview = root.querySelector('script[data-ea-chart="overview"]');
+      if (overview) {
+        const buckets = JSON.parse(overview.textContent || '{}');
+        mk('overviewScoreChart', {
+          type: 'bar',
+          data: {
+            labels: Object.keys(buckets),
+            datasets: [{ label: 'عدد الطلاب', data: Object.values(buckets), backgroundColor: palette.bar, borderRadius: 8 }],
+          },
+          options: { responsive: true, plugins: { legend: { display: false } }, scales: axis() },
+        });
+        return;
+      }
+      const exam = root.querySelector('script[data-ea-chart="exam"]');
+      if (!exam) return;
+      const stats = JSON.parse(exam.textContent || '{}');
+      mk('eaScoreChart', {
+        type: 'bar',
+        data: {
+          labels: Object.keys(stats.buckets || {}),
+          datasets: [{ label: 'عدد الطلاب', data: Object.values(stats.buckets || {}), backgroundColor: palette.bar, borderRadius: 8 }],
+        },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: axis() },
+      });
+      mk('eaPassChart', {
+        type: 'doughnut',
+        data: {
+          labels: ['ناجح', 'راسب'],
+          datasets: [{ data: [stats.pass_rate, Math.max(0, 100 - stats.pass_rate)], backgroundColor: ['#22c55e', '#ef4444'], borderWidth: 0 }],
+        },
+        options: { plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1' } } } },
+      });
+      mk('eaCorrectChart', {
+        type: 'doughnut',
+        data: {
+          labels: ['صحيحة', 'خاطئة / بلا إجابة'],
+          datasets: [{ data: [stats.correct_rate, Math.max(0, 100 - stats.correct_rate)], backgroundColor: ['#06b6d4', '#f59e0b'], borderWidth: 0 }],
+        },
+        options: { plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1' } } } },
+      });
+    };
+
+    // Highlight the picked exam in *both* the desktop sidebar and the
+    // offcanvas list, since the two are separate DOM trees.
+    const markActive = (examId) => {
+      document.querySelectorAll('.ea-exam-item').forEach((item) => {
+        const own = item.dataset.examId || '';
+        item.classList.toggle('active', own === (examId || ''));
+      });
+    };
+
+    renderCharts(main);
+
+    document.body.addEventListener('htmx:afterSwap', (event) => {
+      if (event.target !== main) return;
+      const detail = main.querySelector('.ea-detail');
+      markActive(detail ? detail.dataset.examId : '');
+      renderCharts(main);
+      // On mobile the picker is an offcanvas; close it so the result is visible.
+      if (window.bootstrap && offcanvasEl) {
+        const inst = bootstrap.Offcanvas.getInstance(offcanvasEl);
+        if (inst) inst.hide();
+      }
+    });
+
+    document.body.addEventListener('htmx:historyRestore', () => {
+      const detail = main.querySelector('.ea-detail');
+      markActive(detail ? detail.dataset.examId : '');
+      renderCharts(main);
+    });
+
+    // A 4xx (e.g. the exam was deleted meanwhile) would otherwise swap nothing
+    // and leave the click looking broken.
+    document.body.addEventListener('htmx:responseError', (event) => {
+      if (!event.detail || !event.detail.target || event.detail.target.id !== 'eaMain') return;
+      toast('تعذّر تحميل تحليل الاختبار. حدّث الصفحة وحاول مرة أخرى.', 'error');
+    });
+  }
+
   async function examAction(examId, action) {
     if (action === 'delete' && !confirm(`حذف الاختبار ${examId}؟ لا يمكن التراجع.`)) return;
     const labels = {
@@ -1484,6 +1590,6 @@ const TQM = (() => {
     initUsersPage, showUserForm, editUser, deleteUser, resetUserPassword,
     userbotForm, showUserbotForm, hideUserbotForm, toggleUserbot, setDefaultUserbot,
     deleteUserbot, userbotLoginBox, testUserbot,
-    examAction, initExamForm, selectAllVisible, clearExamQuestions,
+    examAction, initExamForm, initExamAnalytics, selectAllVisible, clearExamQuestions,
   };
 })();

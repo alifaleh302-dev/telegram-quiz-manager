@@ -410,6 +410,131 @@ async def admin_exam_analytics(
 
 # --- HTML pages ------------------------------------------------------------
 
+def _exam_rows(services: Any) -> list[dict[str, Any]]:
+    """Sidebar rows: every exam with the handful of figures it shows."""
+    rows = []
+    for exam in services.exams.list_exams():
+        stats = services.exams.stats(exam["id"])
+        rows.append(
+            {
+                "id": exam["id"],
+                "title": exam["title"],
+                "status": exam.get("status", "draft"),
+                "questions": stats["questions"],
+                "attempts": stats["attempts"],
+                "completed": stats["completed"],
+                "average": stats["average"],
+            }
+        )
+    rows.sort(key=lambda e: (e["attempts"], e["title"]), reverse=True)
+    return rows
+
+
+def _overview_context(services: Any) -> dict[str, Any]:
+    """Site-wide aggregates shown before a specific exam is picked."""
+    students = services.students.list_students()
+    attempts = services.attempts.all_attempts()
+    submitted = [a for a in attempts if a.get("status") == "submitted"]
+    # Aggregates count each student's *best* attempt per exam, not every try.
+    best = services.attempts.best_per_student(submitted)
+    scores = [float(a.get("percentage") or 0) for a in best]
+
+    buckets = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
+    for score in scores:
+        if score <= 20:
+            buckets["0-20"] += 1
+        elif score <= 40:
+            buckets["21-40"] += 1
+        elif score <= 60:
+            buckets["41-60"] += 1
+        elif score <= 80:
+            buckets["61-80"] += 1
+        else:
+            buckets["81-100"] += 1
+
+    return {
+        "totals": {
+            "students": len(students),
+            "exams": len(services.exams.list_exams()),
+            "attempts": len(attempts),
+            "completed": len(submitted),
+            "graded": len(best),
+            "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
+            "highest": round(max(scores), 1) if scores else 0.0,
+            "lowest": round(min(scores), 1) if scores else 0.0,
+        },
+        "buckets": buckets,
+        "active_students": len({a["student_id"] for a in submitted}),
+    }
+
+
+def _detail_context(services: Any, exam_id: str) -> dict[str, Any]:
+    exam = services.exams.get(exam_id)
+    if exam is None:
+        raise ValidationError(f"الاختبار {exam_id} غير موجود.")
+    return {"exam": exam, "stats": services.attempts.exam_analytics(exam_id)}
+
+
+def _htmx_guard(session: Any) -> Response | None:
+    """HTMX swaps cannot follow a login redirect, so ask the client to navigate."""
+    if isinstance(session, RedirectResponse):
+        return Response(status_code=401, headers={"HX-Redirect": "/login"})
+    return None
+
+
+@page_router.get("/exam-analytics", response_class=HTMLResponse)
+async def exam_analytics_page(
+    request: Request,
+    session: Any = Depends(require_page_permission("exams")),
+    exam: str = "",
+) -> Response:
+    if isinstance(session, RedirectResponse):
+        return session
+    services = get_services(request)
+    rows = _exam_rows(services)
+    context: dict[str, Any] = {"exam_rows": rows, "active_exam": ""}
+    if exam:
+        context.update(_detail_context(services, exam))
+        context["active_exam"] = exam
+    else:
+        context.update(_overview_context(services))
+    return render(request, "exam_analytics.html", context, session=session)
+
+
+@page_router.get("/exam-analytics/overview", response_class=HTMLResponse)
+async def exam_analytics_overview(
+    request: Request, session: Any = Depends(require_page_permission("exams"))
+) -> Response:
+    guard = _htmx_guard(session)
+    if guard is not None:
+        return guard
+    services = get_services(request)
+    return render(
+        request,
+        "partials/exam_analytics_overview.html",
+        _overview_context(services),
+        session=session,
+    )
+
+
+@page_router.get("/exam-analytics/detail/{exam_id}", response_class=HTMLResponse)
+async def exam_analytics_detail(
+    request: Request,
+    exam_id: str,
+    session: Any = Depends(require_page_permission("exams")),
+) -> Response:
+    guard = _htmx_guard(session)
+    if guard is not None:
+        return guard
+    services = get_services(request)
+    return render(
+        request,
+        "partials/exam_analytics_detail.html",
+        _detail_context(services, exam_id),
+        session=session,
+    )
+
+
 @page_router.get("/exams", response_class=HTMLResponse)
 async def exams_page(
     request: Request,
@@ -578,62 +703,5 @@ async def attempts_page(
         request,
         "attempts.html",
         {"attempts": rows, "filters": {"status": status, "search": search}},
-        session=session,
-    )
-
-
-@page_router.get("/exam-analytics", response_class=HTMLResponse)
-async def exam_analytics_page(
-    request: Request, session: Any = Depends(require_page_permission("exams"))
-) -> Response:
-    if isinstance(session, RedirectResponse):
-        return session
-    services = get_services(request)
-    students = services.students.list_students()
-    attempts = services.attempts.all_attempts()
-    submitted = [a for a in attempts if a.get("status") == "submitted"]
-    # Aggregates count each student's *best* attempt per exam, not every try.
-    best = services.attempts.best_per_student(submitted)
-    scores = [float(a.get("percentage") or 0) for a in best]
-    exams = services.exams.list_exams()
-
-    # Score distribution buckets for the chart.
-    buckets = {"0-20": 0, "21-40": 0, "41-60": 0, "61-80": 0, "81-100": 0}
-    for score in scores:
-        if score <= 20:
-            buckets["0-20"] += 1
-        elif score <= 40:
-            buckets["21-40"] += 1
-        elif score <= 60:
-            buckets["41-60"] += 1
-        elif score <= 80:
-            buckets["61-80"] += 1
-        else:
-            buckets["81-100"] += 1
-
-    per_exam = []
-    for exam in exams:
-        stats = services.exams.stats(exam["id"])
-        per_exam.append({"title": exam["title"], "id": exam["id"], **stats})
-    per_exam.sort(key=lambda e: e["attempts"], reverse=True)
-
-    return render(
-        request,
-        "exam_analytics.html",
-        {
-            "totals": {
-                "students": len(students),
-                "exams": len(exams),
-                "attempts": len(attempts),
-                "completed": len(submitted),
-                "graded": len(best),
-                "average": round(sum(scores) / len(scores), 1) if scores else 0.0,
-                "highest": round(max(scores), 1) if scores else 0.0,
-                "lowest": round(min(scores), 1) if scores else 0.0,
-            },
-            "buckets": buckets,
-            "per_exam": per_exam,
-            "active_students": len({a["student_id"] for a in submitted}),
-        },
         session=session,
     )

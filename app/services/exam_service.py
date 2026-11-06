@@ -291,6 +291,15 @@ class ExamService:
         rows = [r for r in rows if int(r.get("version", 0)) == version]
         return sorted(rows, key=lambda r: int(r.get("position", 0)))
 
+    def question_rows(self, exam_id: str) -> list[dict[str, Any]]:
+        """Every snapshot row of an exam, across all versions.
+
+        Analytics need to resolve an answer back to the exact snapshot it was
+        graded against, and attempts may span several versions after an edit.
+        """
+        rows = [r for r in self._all_exam_questions() if r["exam_id"] == exam_id]
+        return sorted(rows, key=lambda r: (int(r.get("version", 0)), int(r.get("position", 0))))
+
     def question_count(self, exam_id: str) -> int:
         return len(self.questions_for(exam_id))
 

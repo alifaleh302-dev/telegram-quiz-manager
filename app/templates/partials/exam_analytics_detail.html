@@ -1,0 +1,129 @@
+{# Exam-scoped analytics: loaded into the detail pane when an exam is picked. #}
+{% set status_labels = {'draft':'مسودة','scheduled':'مجدول','published':'منشور','closed':'مغلق','archived':'مؤرشف'} %}
+{% set status_badges = {'draft':'secondary','scheduled':'warning','published':'success','closed':'dark','archived':'secondary'} %}
+<div class="ea-detail" data-exam-id="{{ exam.id }}">
+  <div class="ea-detail-head">
+    <div>
+      <h2 class="ea-exam-title">{{ exam.title }}</h2>
+      <div class="ea-exam-meta">
+        <code>{{ exam.id }}</code>
+        <span class="badge text-bg-{{ status_badges.get(exam.status, 'secondary') }}">
+          {{ status_labels.get(exam.status, exam.status) }}
+        </span>
+        <span class="text-secondary small">{{ stats.questions }} سؤال</span>
+        <span class="text-secondary small">· عتبة النجاح {{ stats.pass_mark }}%</span>
+      </div>
+    </div>
+    <a class="btn btn-sm btn-outline-light" href="/exams/{{ exam.id }}">
+      <i class="bi bi-box-arrow-up-right"></i> صفحة الاختبار
+    </a>
+  </div>
+
+  {% if stats.completed %}
+  <div class="ea-kpis">
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.students_graded }}</span>
+      <span class="ea-kpi-label">طلاب مُقيَّمون</span>
+    </div>
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.average }}%</span>
+      <span class="ea-kpi-label">المتوسط</span>
+    </div>
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.median }}%</span>
+      <span class="ea-kpi-label">الوسيط</span>
+    </div>
+    <div class="ea-kpi ea-kpi-pass">
+      <span class="ea-kpi-value">{{ stats.pass_rate }}%</span>
+      <span class="ea-kpi-label">نسبة النجاح</span>
+    </div>
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.correct_rate }}%</span>
+      <span class="ea-kpi-label">إجابات صحيحة</span>
+    </div>
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.highest }}%</span>
+      <span class="ea-kpi-label">الأعلى</span>
+    </div>
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.lowest }}%</span>
+      <span class="ea-kpi-label">الأدنى</span>
+    </div>
+    <div class="ea-kpi">
+      <span class="ea-kpi-value">{{ stats.completion_rate }}%</span>
+      <span class="ea-kpi-label">نسبة الإكمال</span>
+    </div>
+  </div>
+
+  <div class="ea-charts">
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-bar-chart"></i> توزيع الدرجات</h2></div>
+      <div class="panel-body"><canvas id="eaScoreChart" height="220"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-pie-chart"></i> نجاح / رسوب</h2></div>
+      <div class="panel-body"><canvas id="eaPassChart" height="220"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h2><i class="bi bi-check2-square"></i> صحة الإجابات</h2></div>
+      <div class="panel-body"><canvas id="eaCorrectChart" height="220"></canvas></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h2><i class="bi bi-exclamation-triangle"></i> أكثر الأسئلة التي أخطأ فيها الطلاب</h2>
+      <span class="panel-link">محسوبة على أفضل محاولة لكل طالب</span>
+    </div>
+    <div class="panel-body">
+      {% if stats.hardest_questions %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th>#</th><th>السؤال</th><th>التصنيف</th><th>الصعوبة</th>
+              <th>الإجابة الصحيحة</th><th>محاولات</th><th>أخطاء</th><th>نسبة الخطأ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for q in stats.hardest_questions %}
+            <tr>
+              <td class="text-secondary">{{ loop.index }}</td>
+              <td class="question-cell"><span class="q-text">{{ q.question }}</span><span class="q-correct"><code>{{ q.question_id }}</code></span></td>
+              <td><span class="badge text-bg-secondary">{{ q.category or '—' }}</span></td>
+              <td>
+                {% if q.difficulty %}
+                <span class="badge diff-{{ q.difficulty }}">{{ {'easy':'سهل','medium':'متوسط','hard':'صعب'}.get(q.difficulty, q.difficulty) }}</span>
+                {% else %}—{% endif %}
+              </td>
+              <td>{{ q.options[q.correct_option_id] if q.options and q.correct_option_id < q.options|length else '—' }}</td>
+              <td>{{ q.attempts }}</td>
+              <td>{{ q.wrong }}{% if q.unanswered %} <span class="text-secondary small">(+{{ q.unanswered }} بلا إجابة)</span>{% endif %}</td>
+              <td>
+                <div class="d-flex align-items-center gap-2">
+                  <div class="progress ea-bar" role="progressbar">
+                    <div class="progress-bar {{ 'bg-danger' if q.wrong_rate >= 50 else 'bg-warning' }}"
+                         style="width: {{ q.wrong_rate }}%"></div>
+                  </div>
+                  <span class="small">{{ q.wrong_rate }}%</span>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty-state py-4"><i class="bi bi-emoji-smile"></i><br>لا توجد أخطاء مسجّلة في هذا الاختبار.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <script type="application/json" data-ea-chart="exam">{{ stats | tojson }}</script>
+  {% else %}
+  <p class="empty-state py-5">
+    <i class="bi bi-hourglass-split"></i><br>
+    لا توجد محاولات مُسلَّمة في هذا الاختبار بعد، لذلك لا تتوفر إحصاءات.
+  </p>
+  {% endif %}
+</div>

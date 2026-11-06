@@ -360,6 +360,121 @@ def test_admin_exam_analytics(exam_client) -> None:
     assert totals["completed"] >= 1
 
 
+def test_exam_analytics_detail_is_scoped_to_one_exam(svc) -> None:
+    """The detail figures must describe the chosen exam only."""
+    q1 = _ready(svc, "س1؟", ["أ", "ب"], 0)
+    q2 = _ready(svc, "س2؟", ["ج", "د"], 1)
+    exam_a = svc.exams.create({"title": "أ", "access_mode": "always"}, [q1["id"]])
+    exam_b = svc.exams.create({"title": "ب", "access_mode": "always"}, [q2["id"]])
+    svc.exams.publish(exam_a["id"])
+    svc.exams.publish(exam_b["id"])
+
+    # Student 1: perfect on A, wrong on B. Student 2: fails A.
+    s1 = svc.students.touch(_TG(501))
+    s2 = svc.students.touch(_TG(502))
+
+    a1 = svc.attempts.start(exam_a["id"], s1["id"])
+    svc.attempts.save_answer(a1["id"], s1["id"], q1["id"], 0)
+    svc.attempts.submit(a1["id"], s1["id"])
+
+    b1 = svc.attempts.start(exam_b["id"], s1["id"])
+    svc.attempts.save_answer(b1["id"], s1["id"], q2["id"], 0)
+    svc.attempts.submit(b1["id"], s1["id"])
+
+    a2 = svc.attempts.start(exam_a["id"], s2["id"])
+    svc.attempts.save_answer(a2["id"], s2["id"], q1["id"], 1)
+    svc.attempts.submit(a2["id"], s2["id"])
+
+    stats_a = svc.attempts.exam_analytics(exam_a["id"])
+    assert stats_a["attempts"] == 2
+    assert stats_a["completed"] == 2
+    assert stats_a["students_graded"] == 2
+    assert stats_a["average"] == 50.0
+    assert stats_a["pass_rate"] == 50.0
+    assert stats_a["highest"] == 100.0
+    assert stats_a["lowest"] == 0.0
+    assert stats_a["questions"] == 1
+    assert stats_a["buckets"]["0-20"] == 1
+    assert stats_a["buckets"]["81-100"] == 1
+    # Only the one question of A appears, and half the answers were wrong.
+    assert len(stats_a["hardest_questions"]) == 1
+    assert stats_a["hardest_questions"][0]["wrong_rate"] == 50.0
+    assert stats_a["correct_rate"] == 50.0
+
+    stats_b = svc.attempts.exam_analytics(exam_b["id"])
+    assert stats_b["attempts"] == 1
+    assert stats_b["average"] == 0.0
+    assert stats_b["pass_rate"] == 0.0
+
+
+def test_exam_analytics_counts_best_attempt_only(svc) -> None:
+    """A retake must not double-count a student in the aggregate."""
+    q = _ready(svc, "س؟", ["أ", "ب"], 0)
+    exam = svc.exams.create(
+        {"title": "إعادة", "access_mode": "always", "max_attempts": 0}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(601))
+
+    first = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.save_answer(first["id"], student["id"], q["id"], 1)  # wrong
+    svc.attempts.submit(first["id"], student["id"])
+    second = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.save_answer(second["id"], student["id"], q["id"], 0)  # right
+    svc.attempts.submit(second["id"], student["id"])
+
+    stats = svc.attempts.exam_analytics(exam["id"])
+    assert stats["attempts"] == 2
+    assert stats["students_graded"] == 1
+    assert stats["average"] == 100.0
+    assert stats["pass_rate"] == 100.0
+
+
+def test_exam_analytics_endpoint_and_partials(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1)
+    _submit_one_attempt(exam_client, exam_id)
+
+    # The HTMX partials render standalone and carry the exam title.
+    partial = exam_client.get(f"/exam-analytics/detail/{exam_id}")
+    assert partial.status_code == 200
+    assert "ea-detail" in partial.text
+    assert exam_id in partial.text
+    # Charts are driven by a JSON island, not inline JS that would run before
+    # Chart.js is loaded on a full page render.
+    assert 'data-ea-chart="exam"' in partial.text
+    assert "new Chart(" not in partial.text
+
+    overview = exam_client.get("/exam-analytics/overview")
+    assert overview.status_code == 200
+    assert "overviewScoreChart" in overview.text
+    assert 'data-ea-chart="overview"' in overview.text
+
+    # A deep link selects the exam server-side so the detail pane is preloaded.
+    page = exam_client.get(f"/exam-analytics?exam={exam_id}")
+    assert page.status_code == 200
+    assert "ea-detail" in page.text
+    assert 'data-exam-id="' + exam_id + '"' in page.text
+
+    # No selection falls back to the site-wide overview.
+    bare = exam_client.get("/exam-analytics")
+    assert bare.status_code == 200
+    assert "overviewScoreChart" in bare.text
+
+    unknown = exam_client.get("/exam-analytics/detail/EX9999")
+    assert unknown.status_code == 400
+
+
+def test_exam_analytics_partial_requires_login(exam_client) -> None:
+    exam_client.get("/logout", follow_redirects=False)
+    response = exam_client.get("/exam-analytics/detail/EX0001")
+    assert response.status_code == 401
+    assert response.headers.get("HX-Redirect") == "/login"
+    page = exam_client.get("/exam-analytics", follow_redirects=False)
+    assert page.status_code == 303
+
+
+
 def test_admin_requires_exam_permission(exam_client) -> None:
     # Unauthenticated admin call is rejected.
     assert exam_client.get("/api/admin/exams").status_code == 401

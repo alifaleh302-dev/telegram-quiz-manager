@@ -1,0 +1,36 @@
+{# Sidebar list of exams. Included twice (desktop + offcanvas), so it must not
+   declare element IDs; HTMX targets are wired by class in TQM.initExamAnalytics.
+   Each row is a real link so it still works if HTMX fails to load. #}
+{% set status_labels = {'draft':'مسودة','scheduled':'مجدول','published':'منشور','closed':'مغلق','archived':'مؤرشف'} %}
+{% set status_badges = {'draft':'secondary','scheduled':'warning','published':'success','closed':'dark','archived':'secondary'} %}
+<a class="ea-exam-item ea-exam-item-overview {{ 'active' if not active_exam }}"
+   href="/exam-analytics"
+   hx-get="/exam-analytics/overview" hx-target="#eaMain" hx-swap="innerHTML"
+   hx-push-url="/exam-analytics">
+  <span class="ea-exam-icon"><i class="bi bi-grid-1x2"></i></span>
+  <span class="ea-exam-body">
+    <span class="ea-exam-name">نظرة عامة</span>
+    <span class="ea-exam-sub">كل الاختبارات</span>
+  </span>
+</a>
+
+{% if exam_rows %}
+  {% for row in exam_rows %}
+  <a class="ea-exam-item {{ 'active' if active_exam == row.id }}"
+     data-exam-id="{{ row.id }}"
+     href="/exam-analytics?exam={{ row.id }}"
+     hx-get="/exam-analytics/detail/{{ row.id }}" hx-target="#eaMain" hx-swap="innerHTML"
+     hx-push-url="/exam-analytics?exam={{ row.id }}">
+    <span class="ea-exam-icon"><i class="bi bi-journal-text"></i></span>
+    <span class="ea-exam-body">
+      <span class="ea-exam-name">{{ row.title }}</span>
+      <span class="ea-exam-sub">
+        <span class="badge text-bg-{{ status_badges.get(row.status, 'secondary') }}">{{ status_labels.get(row.status, row.status) }}</span>
+        {{ row.attempts }} محاولة · {{ row.average }}%
+      </span>
+    </span>
+  </a>
+  {% endfor %}
+{% else %}
+  <p class="empty-state py-4"><i class="bi bi-journal-x"></i><br>لا توجد اختبارات بعد.</p>
+{% endif %}

@@ -1,0 +1,38 @@
+{# Site-wide analytics: shown when no specific exam is selected. #}
+<div class="ea-overview">
+  <div class="stat-strip">
+    <span><strong>{{ totals.students }}</strong> طالب</span>
+    <span class="text-info"><strong>{{ totals.exams }}</strong> اختبار</span>
+    <span><strong>{{ totals.attempts }}</strong> محاولة</span>
+    <span class="text-success"><strong>{{ totals.completed }}</strong> مكتملة</span>
+    <span><strong>{{ totals.average }}%</strong> المتوسط</span>
+  </div>
+  <p class="hint mb-3">
+    تُحتسب الإحصائيات على أساس <strong>أفضل نتيجة</strong> لكل طالب في كل اختبار
+    ({{ totals.graded }} نتيجة معتمدة)، وليس على كل المحاولات. اختر اختباراً من القائمة
+    لعرض تحليله المفصّل.
+  </p>
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div class="panel">
+        <div class="panel-header"><h2><i class="bi bi-bar-chart"></i> توزيع الدرجات (كل الاختبارات)</h2></div>
+        <div class="panel-body"><canvas id="overviewScoreChart" height="220"></canvas></div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="panel">
+        <div class="panel-header"><h2><i class="bi bi-trophy"></i> ملخص</h2></div>
+        <div class="panel-body">
+          <dl class="schedule-meta">
+            <div><dt>الأعلى</dt><dd>{{ totals.highest }}%</dd></div>
+            <div><dt>الأدنى</dt><dd>{{ totals.lowest }}%</dd></div>
+            <div><dt>المتوسط</dt><dd>{{ totals.average }}%</dd></div>
+            <div><dt>طلاب أنهوا اختباراً</dt><dd>{{ active_students }}</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="application/json" data-ea-chart="overview">{{ buckets | tojson }}</script>
