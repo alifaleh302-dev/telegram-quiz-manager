@@ -24,6 +24,7 @@ ANALYTICS_JOB_ID = "analytics:auto-collect"
 EXAM_SWEEP_JOB_ID = "exam:sweep-attempts"
 NOTIFY_JOB_ID = "exam:dispatch-notifications"
 DUE_EXAM_JOB_ID = "exam:notify-due"
+ACTIVITY_SWEEP_JOB_ID = "exam:sweep-activity"
 
 
 class SchedulerEngine:
@@ -38,6 +39,7 @@ class SchedulerEngine:
         telegram: Any | None = None,
         attempts: Any | None = None,
         notifications: Any | None = None,
+        activity: Any | None = None,
     ) -> None:
         self._runner = runner
         self._schedules = schedules
@@ -46,6 +48,7 @@ class SchedulerEngine:
         self._telegram = telegram
         self._attempts = attempts
         self._notifications = notifications
+        self._activity = activity
         self._scheduler = AsyncIOScheduler(timezone="UTC")
         self._started = False
 
@@ -121,6 +124,15 @@ class SchedulerEngine:
                 replace_existing=True,
                 max_instances=1,
             )
+        if self._activity is not None:
+            self._scheduler.add_job(
+                self._sweep_activity,
+                trigger=IntervalTrigger(minutes=30),
+                id=ACTIVITY_SWEEP_JOB_ID,
+                name="تنظيف سجل النشاط",
+                replace_existing=True,
+                max_instances=1,
+            )
         if self._notifications is not None:
             self._scheduler.add_job(
                 self._dispatch_notifications,
@@ -148,6 +160,12 @@ class SchedulerEngine:
                 logger.info("closed %s expired exam attempt(s)", closed)
         except Exception:  # noqa: BLE001 - a failing job must not kill the scheduler
             logger.exception("exam attempt sweep failed")
+
+    async def _sweep_activity(self) -> None:
+        try:
+            self._activity.sweep()
+        except Exception:  # noqa: BLE001
+            logger.exception("student activity sweep failed")
 
     async def _dispatch_notifications(self) -> None:
         try:

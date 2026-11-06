@@ -148,13 +148,27 @@
         </div>
         <div class="mb-2" id="userPermsWrap">
           <span class="mini-label">الصلاحيات</span>
-          <div class="perm-grid">
-            {% for key, label in grants.items() %}
-            <label class="form-check">
-              <input class="form-check-input perm-check" type="checkbox" value="{{ key }}">
-              <span class="form-check-label">{{ label }}</span>
-            </label>
-            {% endfor %}
+          <div class="perm-group">
+            <div class="perm-group-title"><i class="bi bi-mortarboard"></i> منصة الاختبارات (التطبيق المصغّر)</div>
+            <div class="perm-grid">
+              {% for key, label in grant_groups.mini_app.items() %}
+              <label class="form-check">
+                <input class="form-check-input perm-check" type="checkbox" value="{{ key }}">
+                <span class="form-check-label">{{ label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="perm-group">
+            <div class="perm-group-title"><i class="bi bi-broadcast"></i> منصة النشر والأتمتة</div>
+            <div class="perm-grid">
+              {% for key, label in grant_groups.platform.items() %}
+              <label class="form-check">
+                <input class="form-check-input perm-check" type="checkbox" value="{{ key }}">
+                <span class="form-check-label">{{ label }}</span>
+              </label>
+              {% endfor %}
+            </div>
           </div>
         </div>
       </div>

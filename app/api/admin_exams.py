@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import (
     get_services,
     render,
+    require_any_permission,
     require_page_permission,
     require_permission,
 )
@@ -26,6 +27,24 @@ page_router = APIRouter(tags=["admin-exams"])
 
 def _render_page(request: Request, template: str, context: dict[str, Any], session: Any) -> Response:
     return render(request, template, context, session=session)
+
+
+def _activity_snapshot(services: Any, exam_id: str = "") -> dict[str, Any]:
+    """The live feed: active students, optionally scoped to one exam.
+
+    Resolution to names/titles happens here so the client only renders what it
+    receives. ``ttl_seconds`` is sent so the UI can explain the inactivity rule.
+    """
+    snapshot = services.activity.snapshot(
+        students=services.students, exams=services.exams
+    )
+    if exam_id:
+        snapshot["active"] = [a for a in snapshot["active"] if a["exam_id"] == exam_id]
+        snapshot["count"] = len(snapshot["active"])
+    # "Solved now": active students whose latest action was a submit, i.e. they
+    # just finished rather than still working through the questions.
+    snapshot["solved_now"] = sum(1 for a in snapshot["active"] if a["event"] == "submit")
+    return snapshot
 
 
 class ExamIn(BaseModel):
@@ -249,21 +268,44 @@ def admin_reopen_exam(
 
 @router.get("/exams/{exam_id}/attempts")
 def admin_exam_attempts(
-    request: Request, exam_id: str, _: Any = Depends(require_permission("exams"))
+    request: Request, exam_id: str, _: Any = Depends(require_permission("attempts_manage"))
 ) -> dict[str, Any]:
     services = get_services(request)
     students = {s["id"]: services.students.view(s) for s in services.students.list_students()}
+    activity = services.activity.active_for_exam(exam_id)
     rows = []
     for attempt in services.attempts.attempts_for_exam(exam_id):
-        rows.append({**attempt, "student": students.get(attempt["student_id"])})
+        rows.append(
+            {
+                **attempt,
+                "student": students.get(attempt["student_id"]),
+                "activity": activity.get(attempt["student_id"]),
+            }
+        )
     return {"attempts": sorted(rows, key=lambda a: a.get("started_at") or "", reverse=True)}
+
+
+@router.get("/activity")
+def admin_activity(
+    request: Request,
+    exam_id: str = "",
+    _: Any = Depends(require_any_permission("exams", "attempts_manage")),
+) -> dict[str, Any]:
+    """Live activity feed polled by the admin UI.
+
+    Read-only and cheap: one scan of the small activity collection, so polling
+    it every few seconds is fine. Scoping by ``exam_id`` shows only students
+    currently interacting with that exam.
+    """
+    services = get_services(request)
+    return _activity_snapshot(services, exam_id)
 
 
 # --- students --------------------------------------------------------------
 
 @router.get("/students")
 def admin_list_students(
-    request: Request, _: Any = Depends(require_permission("exams")), search: str = ""
+    request: Request, _: Any = Depends(require_permission("students_manage")), search: str = ""
 ) -> dict[str, Any]:
     services = get_services(request)
     students = services.students.list_students(search=search)
@@ -287,7 +329,7 @@ def admin_list_students(
 
 @router.get("/students/{student_id}/attempts")
 def admin_student_attempts(
-    request: Request, student_id: str, _: Any = Depends(require_permission("exams"))
+    request: Request, student_id: str, _: Any = Depends(require_permission("students_manage"))
 ) -> dict[str, Any]:
     services = get_services(request)
     student = services.students.get(student_id)
@@ -306,7 +348,7 @@ def admin_reset_attempts(
     request: Request,
     student_id: str,
     exam_id: str,
-    session: Any = Depends(require_permission("exams")),
+    session: Any = Depends(require_permission("attempts_manage")),
 ) -> dict[str, Any]:
     services = get_services(request)
     removed = services.attempts.reset_student_attempts(
@@ -507,7 +549,7 @@ def _htmx_guard(session: Any) -> Response | None:
 @page_router.get("/exam-analytics", response_class=HTMLResponse)
 def exam_analytics_page(
     request: Request,
-    session: Any = Depends(require_page_permission("exams")),
+    session: Any = Depends(require_page_permission("exam_analytics")),
     exam: str = "",
 ) -> Response:
     if isinstance(session, RedirectResponse):
@@ -525,7 +567,7 @@ def exam_analytics_page(
 
 @page_router.get("/exam-analytics/overview", response_class=HTMLResponse)
 def exam_analytics_overview(
-    request: Request, session: Any = Depends(require_page_permission("exams"))
+    request: Request, session: Any = Depends(require_page_permission("exam_analytics"))
 ) -> Response:
     guard = _htmx_guard(session)
     if guard is not None:
@@ -543,7 +585,7 @@ def exam_analytics_overview(
 def exam_analytics_detail(
     request: Request,
     exam_id: str,
-    session: Any = Depends(require_page_permission("exams")),
+    session: Any = Depends(require_page_permission("exam_analytics")),
 ) -> Response:
     guard = _htmx_guard(session)
     if guard is not None:
@@ -622,8 +664,13 @@ def exam_detail_page(
     if exam is None:
         return RedirectResponse(url="/exams", status_code=303)
     students = {s["id"]: services.students.view(s) for s in services.students.list_students()}
+    activity = services.activity.active_for_exam(exam_id)
     attempts = [
-        {**a, "student": students.get(a["student_id"])}
+        {
+            **a,
+            "student": students.get(a["student_id"]),
+            "activity": activity.get(a["student_id"]),
+        }
         for a in services.attempts.attempts_for_exam(exam_id)
     ]
     attempts.sort(key=lambda a: a.get("started_at") or "", reverse=True)
@@ -635,6 +682,8 @@ def exam_detail_page(
             "questions": services.exams.questions_for(exam_id),
             "attempts": attempts,
             "stats": services.exams.stats(exam_id),
+            "active_count": len(activity),
+            "activity_ttl": services.activity.TTL_SECONDS,
         },
         session=session,
     )
@@ -668,7 +717,7 @@ def exam_edit_page(
 @page_router.get("/students", response_class=HTMLResponse)
 def students_page(
     request: Request,
-    session: Any = Depends(require_page_permission("exams")),
+    session: Any = Depends(require_page_permission("students_manage")),
     search: str = "",
 ) -> Response:
     if isinstance(session, RedirectResponse):
@@ -700,7 +749,7 @@ def students_page(
 @page_router.get("/attempts", response_class=HTMLResponse)
 def attempts_page(
     request: Request,
-    session: Any = Depends(require_page_permission("exams")),
+    session: Any = Depends(require_page_permission("attempts_manage")),
     status: str = "",
     search: str = "",
 ) -> Response:
@@ -710,6 +759,10 @@ def attempts_page(
     exams = {e["id"]: e for e in services.exams.list_exams()}
     students = {s["id"]: services.students.view(s) for s in services.students.list_students()}
     student_ids, exam_ids = _search_scopes(services, search)
+    live = {
+        row["student_id"]: row
+        for row in services.activity.active_students()
+    }
     rows = []
     for attempt in services.attempts.all_attempts(
         status=status, search=search, student_ids=student_ids, exam_ids=exam_ids
@@ -719,11 +772,19 @@ def attempts_page(
                 **attempt,
                 "exam_title": exams.get(attempt["exam_id"], {}).get("title", attempt["exam_id"]),
                 "student": students.get(attempt["student_id"]),
+                # Present only while the student is active right now; the row
+                # then shows an "online" dot next to the attempt.
+                "activity": live.get(attempt["student_id"]),
             }
         )
     return render(
         request,
         "attempts.html",
-        {"attempts": rows, "filters": {"status": status, "search": search}},
+        {
+            "attempts": rows,
+            "filters": {"status": status, "search": search},
+            "active_count": len(live),
+            "activity_ttl": services.activity.TTL_SECONDS,
+        },
         session=session,
     )

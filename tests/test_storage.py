@@ -103,6 +103,8 @@ def test_storage_exposes_all_collections(tmp_path: Path) -> None:
         # Exam platform collections (added with the student portal).
         "students", "exams", "exam_questions", "attempts", "attempt_answers",
         "student_exam_state", "notifications", "exam_admin_logs",
+        # Live activity tracking (one row per active student).
+        "student_activity",
     }
 
 

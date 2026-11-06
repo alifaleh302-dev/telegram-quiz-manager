@@ -550,8 +550,31 @@ const SA = (() => {
       }
     }
 
-    const onHide = () => pauseTimer();
-    const onShow = () => { if (!document.hidden) resumeTimer(); };
+    // --- live activity heartbeat -----------------------------------------
+    // While the student is present in the session (visible tab) keep them
+    // counted as active in the admin live feed, so the operator sees who is
+    // answering right now. It stops on hide/cleanup: an abandoned session must
+    // not keep reporting the student as online.
+    let activityTimer = null;
+    const pingActivity = () => {
+      if (document.hidden || finished) return;
+      const current = questions[index];
+      api('/api/student/activity/heartbeat', {
+        method: 'POST', write: true,
+        body: { exam_id: data.exam.id, question_id: current ? current.question_id : '' },
+      }).catch(() => { /* activity is best-effort */ });
+    };
+    const startActivity = () => {
+      pingActivity();
+      if (activityTimer) clearInterval(activityTimer);
+      activityTimer = setInterval(pingActivity, 45000);
+    };
+    const stopActivity = () => {
+      if (activityTimer) { clearInterval(activityTimer); activityTimer = null; }
+    };
+
+    const onHide = () => { pauseTimer(); stopActivity(); };
+    const onShow = () => { if (!document.hidden) { resumeTimer(); startActivity(); } };
     const onVisibility = () => { document.hidden ? onHide() : onShow(); };
 
     // Leaving the session screen (another tab, back, submit) must stop this
@@ -562,6 +585,7 @@ const SA = (() => {
       window.removeEventListener('blur', onHide);
       window.removeEventListener('pageshow', onShow);
       window.removeEventListener('focus', onShow);
+      stopActivity();
       if (!finished) pauseTimer();
       stopTicker();
       state.sessionCleanup = null;
@@ -589,6 +613,7 @@ const SA = (() => {
     } else {
       startTicker();
     }
+    startActivity();
   }
 
   function confirmSubmit(attemptId, answers, questions) {
@@ -718,6 +743,16 @@ const SA = (() => {
 
   async function loadNotifications() {
     const data = await api('/api/student/notifications');
+    // Opening the list counts as reading it: clear the badge and mark the rows
+    // read server-side, so the unread count does not linger until each row is
+    // tapped. Best-effort — a failure must not stop the list from rendering.
+    if (data.unread) {
+      try {
+        await api('/api/student/notifications/read-all', { method: 'POST', write: true });
+        data.notifications.forEach((note) => { if (!note.read_at) note.read_at = new Date().toISOString(); });
+        data.unread = 0;
+      } catch { /* badge stays until the next successful refresh */ }
+    }
     await refreshBadge();
     const wrap = el('<div></div>');
     if (!data.notifications.length) {
@@ -729,17 +764,10 @@ const SA = (() => {
           <p class="sa-note">${esc(note.body)}</p>
           <div class="sa-meta" style="margin-top:8px"><span><i class="bi bi-clock-history"></i> ${esc(note.created_at)}</span></div>
         </div>`);
-        if (!note.read_at) {
-          node.addEventListener('click', async () => {
-            try { await api(`/api/student/notifications/${note.id}/read`, { method: 'POST', write: true }); } catch {}
-            node.style.opacity = '0.7';
-            refreshBadge();
-          });
-        }
         wrap.appendChild(node);
       });
     }
-    setHeader('التنبيهات', data.unread ? `${data.unread} غير مقروء` : '', false);
+    setHeader('التنبيهات', '', false);
     render(wrap);
   }
 

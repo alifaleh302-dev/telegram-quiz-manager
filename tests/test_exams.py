@@ -1314,3 +1314,194 @@ def test_welcome_message_uses_custom_template(svc) -> None:
     svc.app_settings.update({"messages": {"welcome": "أهلاً بك في المنصة"}})
     bot = BotManager({"app_settings": svc.app_settings}, secret_store=None)
     assert bot._welcome_text() == "أهلاً بك في المنصة"
+
+
+# --- notifications: mark-all-read ------------------------------------------
+
+def test_mark_all_read_clears_the_unread_count(svc) -> None:
+    """Opening the list clears the badge: one call reads every unread row."""
+    q = _ready(svc)
+    exam = svc.exams.create({"title": "إشعار", "access_mode": "always"}, [q["id"]])
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(30))
+    svc.notifications.enqueue(
+        student_id=student["id"], exam_id=exam["id"], type="exam_published", title="t", body="b"
+    )
+    svc.notifications.enqueue(
+        student_id=student["id"], exam_id=exam["id"], type="attempt_completed", title="t2", body="b2"
+    )
+    assert svc.notifications.unread_count(student["id"]) == 2
+
+    changed = svc.notifications.mark_all_read(student["id"])
+    assert changed == 2
+    assert svc.notifications.unread_count(student["id"]) == 0
+    # Idempotent: nothing left to mark on a second call.
+    assert svc.notifications.mark_all_read(student["id"]) == 0
+
+
+def test_read_all_endpoint_clears_the_badge(exam_client) -> None:
+    csrf = _login(exam_client)
+    # The student must exist before publishing so the fan-out has a target:
+    # a first student call provisions the row.
+    headers = _student_headers()
+    exam_client.get("/api/student/dashboard", headers=headers)
+    _make_exam(exam_client, csrf, questions=1)
+
+    before = exam_client.get("/api/student/notifications", headers=headers).json()
+    assert before["unread"] >= 1
+
+    cleared = exam_client.post(
+        "/api/student/notifications/read-all", headers=headers
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["unread"] == 0
+
+    after = exam_client.get("/api/student/notifications", headers=headers).json()
+    assert after["unread"] == 0
+    assert all(note["read_at"] for note in after["notifications"])
+
+
+# --- permission catalog groups ---------------------------------------------
+
+def test_mini_app_permissions_are_offered_as_a_group(exam_client) -> None:
+    """The user form offers the Mini App grants as a selectable group."""
+    _login(exam_client)
+    page = exam_client.get("/users")
+    assert page.status_code == 200
+    for label in ("منصة الاختبارات", "إدارة الطلاب", "تحليل الاختبارات"):
+        assert label in page.text
+
+    from app.core.permissions import MINI_APP_GRANTS
+
+    listed = exam_client.get("/api/users").json()
+    assert "mini_app" in listed["grant_groups"]
+    assert set(listed["grant_groups"]["mini_app"]) == set(MINI_APP_GRANTS)
+    # Every mini-app key is still a real grant (checked against the flat catalog).
+    for key in MINI_APP_GRANTS:
+        assert key in listed["grants"]
+
+
+def test_granting_only_a_sub_grant_hides_the_other_tabs(exam_client) -> None:
+    """Holding just ``students_manage`` shows the Students tab, not Attempts."""
+    csrf = _login(exam_client)
+    created = exam_client.post(
+        "/api/users",
+        json={
+            "username": "roster",
+            "password": "UserPassword123!",
+            "role": "user",
+            "permissions": ["students_manage"],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code in (200, 201), created.text
+
+    exam_client.cookies.clear()
+    signed_in = exam_client.post(
+        "/login",
+        data={"username": "roster", "password": "UserPassword123!"},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+    page = exam_client.get("/")
+    assert 'href="/students"' in page.text
+    assert 'href="/attempts"' not in page.text
+    assert 'href="/exams"' not in page.text
+    # The ungranted page redirects away.
+    assert exam_client.get("/attempts", follow_redirects=False).status_code == 303
+    assert exam_client.get("/students").status_code == 200
+
+
+# --- live activity tracking ------------------------------------------------
+
+def test_activity_touch_and_snapshot(svc) -> None:
+    q = _ready(svc)
+    exam = svc.exams.create({"title": "نشاط", "access_mode": "always"}, [q["id"]])
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(40, first="نورة"))
+
+    svc.activity.touch(student["id"], "answer", exam_id=exam["id"], question_id=q["id"])
+    snapshot = svc.activity.snapshot(students=svc.students, exams=svc.exams)
+    assert snapshot["count"] == 1
+    row = snapshot["active"][0]
+    assert row["student_name"] == "نورة"
+    assert row["exam_id"] == exam["id"]
+    assert row["event_label"] == "أجاب عن سؤال"
+
+    scoped = svc.activity.active_for_exam(exam["id"])
+    assert student["id"] in scoped
+    assert svc.activity.active_for_exam("EX9999") == {}
+
+
+def test_activity_is_not_counted_after_the_ttl(svc) -> None:
+    """A stale action is dropped: nobody idle is reported as active."""
+    student = svc.students.touch(_TG(41))
+    svc.activity.touch(student["id"], "view")
+    assert svc.activity.snapshot()["count"] == 1
+    # Zero-second TTL means only an action from this exact instant counts.
+    assert svc.activity.snapshot(ttl=0)["count"] == 0
+    assert svc.activity.active_students(ttl=0) == []
+
+
+def test_activity_sweep_prunes_old_rows(svc) -> None:
+    student = svc.students.touch(_TG(42))
+    svc.activity.touch(student["id"], "view")
+
+    def _age(document):
+        for row in document["activity"]:
+            row["last_at"] = "2000-01-01T00:00:00Z"
+
+    svc.storage.student_activity.update(_age)
+    assert svc.activity.sweep() == 1
+    assert svc.activity.snapshot()["count"] == 0
+
+
+def test_activity_endpoint_and_page_badge(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=2)
+    exam_client.post(f"/api/admin/exams/{exam_id}/publish", headers={"X-CSRF-Token": csrf})
+    headers = _student_headers()
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.status_code == 200
+    attempt_id = started.json()["attempt"]["id"]
+
+    # Answering marks the student active for this exam.
+    exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": started.json()["questions"][0]["question_id"], "selected_option": 0},
+        headers=headers,
+    )
+    feed = exam_client.get("/api/admin/activity", params={"exam_id": exam_id})
+    assert feed.status_code == 200
+    assert feed.json()["count"] == 1
+    assert feed.json()["active"][0]["student_name"] == "سارة العلي"
+
+    # The exam detail page renders the live panel and the online dot.
+    page = exam_client.get(f"/exams/{exam_id}")
+    assert page.status_code == 200
+    assert 'id="livePanel"' in page.text
+    assert "النشاط المباشر" in page.text
+    assert "online-dot" in page.text
+
+
+def test_activity_endpoint_requires_a_grant(exam_client) -> None:
+    csrf = _login(exam_client)
+    created = exam_client.post(
+        "/api/users",
+        json={
+            "username": "nobody",
+            "password": "UserPassword123!",
+            "role": "user",
+            "permissions": [],
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert created.status_code in (200, 201), created.text
+    exam_client.cookies.clear()
+    signed_in = exam_client.post(
+        "/login",
+        data={"username": "nobody", "password": "UserPassword123!"},
+        follow_redirects=False,
+    )
+    assert signed_in.status_code == 303
+    assert exam_client.get("/api/admin/activity").status_code == 403

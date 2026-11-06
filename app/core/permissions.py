@@ -19,15 +19,34 @@ ROLE_USER = "user"
 ROLES = (ROLE_ADMIN, ROLE_USER)
 
 # ``key`` -> Arabic label shown in the users admin UI.
-GRANTS: dict[str, str] = {
+#
+# The catalog is split into two groups purely for presentation: the platform
+# grants cover the publishing system (questions, channels, schedules…), while
+# the mini-app grants cover the Student Mini App ("منصة الاختبارات"). Both live
+# in one catalog, so ``permissions_for`` and every ``require_permission`` check
+# stay unchanged — only the user form groups the checkboxes.
+PLATFORM_GRANTS: dict[str, str] = {
     "questions": "إدارة بنك الأسئلة",
     "channels": "إدارة القنوات",
     "schedules": "إدارة الجداول",
     "publish": "النشر اليدوي الفوري",
     "automation": "تشغيل الأتمتة وإيقافها",
     "analytics": "الإحصائيات وجمع النتائج",
-    "exams": "إدارة الاختبارات والطلاب",
 }
+
+MINI_APP_GRANTS: dict[str, str] = {
+    "exams": "إدارة الاختبارات",
+    "students_manage": "إدارة الطلاب",
+    "attempts_manage": "إدارة المحاولات والنتائج",
+    "exam_analytics": "تحليل الاختبارات",
+}
+
+GRANTS: dict[str, str] = {**PLATFORM_GRANTS, **MINI_APP_GRANTS}
+
+
+def grant_groups() -> dict[str, dict[str, str]]:
+    """The two labeled groups the user form renders, mini-app first."""
+    return {"mini_app": dict(MINI_APP_GRANTS), "platform": dict(PLATFORM_GRANTS)}
 
 
 def clean_permissions(values: Any) -> list[str]:

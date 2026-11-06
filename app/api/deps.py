@@ -123,6 +123,29 @@ def require_permission(permission: str):
     return _guard
 
 
+def require_any_permission(*permissions: str):
+    """Like :func:`require_permission` but satisfied by *any* of the grants.
+
+    Used where one endpoint serves two audiences: live activity is shown on both
+    the exams pages (``exams``) and the attempts page (``attempts_manage``), so a
+    holder of either grant must be allowed to poll it.
+    """
+
+    async def _guard(
+        request: Request, session: Session = Depends(api_guard)
+    ) -> Session:
+        services = get_services(request)
+        held = permissions_for(services.users.get_user(session.username))
+        if not held.intersection(permissions):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="لا تملك صلاحية تنفيذ هذا الإجراء.",
+            )
+        return session
+
+    return _guard
+
+
 def require_page_permission(permission: str):
     """HTML-page variant of :func:`require_permission`.
 

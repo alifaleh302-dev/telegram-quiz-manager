@@ -18,7 +18,7 @@ from app.api.deps import (
     require_admin,
     require_admin_page,
 )
-from app.core.permissions import GRANTS, ROLES
+from app.core.permissions import GRANTS, ROLES, grant_groups
 
 router = APIRouter(tags=["users"])
 
@@ -54,6 +54,7 @@ async def users_page(
         {
             "users": services.users.list_views(),
             "grants": GRANTS,
+            "grant_groups": grant_groups(),
             "roles": ROLES,
             "logins": services.users.login_history(limit=20),
         },
@@ -67,6 +68,7 @@ async def list_users(request: Request, _: Any = Depends(require_admin)) -> dict[
     return {
         "users": services.users.list_views(),
         "grants": GRANTS,
+        "grant_groups": grant_groups(),
     }
 
 

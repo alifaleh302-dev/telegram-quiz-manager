@@ -49,12 +49,18 @@
       <a class="nav-item {{ 'active' if active_page == 'exams' }}" href="/exams">
         <i class="bi bi-journal-check"></i> <span>الاختبارات</span>
       </a>
+      {% endif %}
+      {% if 'students_manage' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'students' }}" href="/students">
         <i class="bi bi-mortarboard"></i> <span>الطلاب</span>
       </a>
+      {% endif %}
+      {% if 'attempts_manage' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'attempts' }}" href="/attempts">
         <i class="bi bi-list-check"></i> <span>المحاولات</span>
       </a>
+      {% endif %}
+      {% if 'exam_analytics' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'exam-analytics' }}" href="/exam-analytics">
         <i class="bi bi-graph-up"></i> <span>تحليل الاختبارات</span>
       </a>

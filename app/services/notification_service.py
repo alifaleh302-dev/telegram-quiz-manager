@@ -107,6 +107,25 @@ class NotificationService:
 
         self._storage.notifications.update(_mutate)
 
+    def mark_all_read(self, student_id: str) -> int:
+        """Mark every unread notification of one student as read.
+
+        Opening the notifications list is treated as reading them: the student
+        has seen the titles, so the badge must clear instead of nagging until
+        each row is tapped individually. Returns how many rows changed.
+        """
+        now = utc_now_iso()
+
+        def _mutate(document: dict[str, Any]) -> int:
+            changed = 0
+            for note in document["notifications"]:
+                if note["student_id"] == student_id and not note.get("read_at"):
+                    note["read_at"] = now
+                    changed += 1
+            return changed
+
+        return self._storage.notifications.update(_mutate)
+
     def stats(self) -> dict[str, int]:
         rows = self._all()
         return {

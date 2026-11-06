@@ -60,6 +60,9 @@ ROWS_TABLES: dict[str, str] = {
     "student_exam_state": "student_exam_state",
     "notifications": "notifications",
     "exam_admin_logs": "exam_admin_logs",
+    # Live activity tracking: one row per student, holding the last moment they
+    # interacted with the Mini App (kept small, swept after a TTL).
+    "student_activity": "student_activity",
 }
 
 # The key of the list inside each collection's document.
@@ -80,6 +83,7 @@ ROWS_KEYS: dict[str, str] = {
     "student_exam_state": "states",
     "notifications": "notifications",
     "exam_admin_logs": "entries",
+    "student_activity": "activity",
 }
 
 # The JSON file each collection used to live in, for one-time migration.
@@ -118,6 +122,7 @@ COLLECTION_NAMES: tuple[str, ...] = (
     "student_exam_state",
     "notifications",
     "exam_admin_logs",
+    "student_activity",
 )
 
 _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -209,6 +214,7 @@ def default_collections() -> dict[str, dict[str, Any]]:
         "student_exam_state": {"version": 1, "counter": 0, "states": []},
         "notifications": {"version": 1, "counter": 0, "notifications": []},
         "exam_admin_logs": {"version": 1, "counter": 0, "entries": []},
+        "student_activity": {"version": 1, "counter": 0, "activity": []},
     }
 
 

@@ -21,6 +21,7 @@ from app.api.student_deps import (
     require_student,
     require_student_write,
 )
+from app.services import activity_service as activity
 from app.services.exam_attempt_service import AttemptError
 from app.storage.validators import ValidationError
 
@@ -35,6 +36,11 @@ class InitDataIn(BaseModel):
 class AnswerIn(BaseModel):
     question_id: str
     selected_option: int
+
+
+class ActivityIn(BaseModel):
+    exam_id: str = ""
+    question_id: str = ""
 
 
 class NotificationPrefsIn(BaseModel):
@@ -133,6 +139,7 @@ def student_auth(request: Request, payload: InitDataIn) -> dict[str, Any]:
 @router.get("/profile")
 def student_profile(ctx: StudentContext = Depends(require_student)) -> dict[str, Any]:
     services = ctx.services
+    services.activity.touch(ctx.id, activity.EVENT_VIEW)
     return {
         "profile": services.students.view(ctx.student),
         "unread_notifications": services.notifications.unread_count(ctx.id),
@@ -214,6 +221,7 @@ def student_exam_detail(
         raise ValidationError("الاختبار غير موجود.")
     # Opening the detail marks the exam as viewed (so it stops counting as new).
     services.attempts.mark_viewed(exam_id, ctx.id)
+    services.activity.touch(ctx.id, activity.EVENT_OPEN_EXAM, exam_id=exam_id)
     card = _exam_card(exam, services, ctx.id)
     attempts = [
         _attempt_summary(a)
@@ -275,6 +283,7 @@ def student_start_attempt(
         attempt = services.attempts.start(exam_id, ctx.id)
     except AttemptError as exc:
         raise ValidationError(str(exc)) from exc
+    services.activity.touch(ctx.id, activity.EVENT_START, exam_id=exam_id)
     return _attempt_payload(attempt, services, ctx.id)
 
 
@@ -363,6 +372,13 @@ def student_save_answer(
         )
     except AttemptError as exc:
         raise ValidationError(str(exc)) from exc
+    exam_id = (services.attempts.get(attempt_id) or {}).get("exam_id", "")
+    services.activity.touch(
+        ctx.id,
+        activity.EVENT_ANSWER,
+        exam_id=exam_id,
+        question_id=payload.question_id,
+    )
     return {"ok": True}
 
 
@@ -389,6 +405,7 @@ def student_resume_attempt(
         attempt = services.attempts.resume(attempt_id, ctx.id)
     except AttemptError as exc:
         raise ValidationError(str(exc)) from exc
+    services.activity.touch(ctx.id, activity.EVENT_VIEW, exam_id=attempt["exam_id"])
     return {"attempt": _attempt_summary(attempt)}
 
 
@@ -404,6 +421,7 @@ def student_submit_attempt(
 
     exam = services.exams.get(attempt["exam_id"]) or {}
     services.notifications.notify_attempt_completed(attempt, exam)
+    services.activity.touch(ctx.id, activity.EVENT_SUBMIT, exam_id=attempt["exam_id"])
     return {"result": _result_payload(attempt, exam)}
 
 
@@ -425,6 +443,9 @@ def student_review_attempt(
         review = services.attempts.review(attempt_id, ctx.id)
     except AttemptError as exc:
         raise ValidationError(str(exc)) from exc
+    services.activity.touch(
+        ctx.id, activity.EVENT_REVIEW, exam_id=review["attempt"]["exam_id"]
+    )
     exam = review["exam"]
     return {
         "attempt": _attempt_summary(review["attempt"]),
@@ -464,6 +485,35 @@ def student_read_notification(
     notification_id: str, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     ctx.services.notifications.mark_read(ctx.id, notification_id)
+    return {"ok": True}
+
+
+@router.post("/notifications/read-all")
+def student_read_all_notifications(
+    ctx: StudentContext = Depends(require_student_write),
+) -> dict[str, Any]:
+    """Clear the whole unread badge (called when the list is opened)."""
+    changed = ctx.services.notifications.mark_all_read(ctx.id)
+    return {"ok": True, "marked": changed, "unread": 0}
+
+
+@router.post("/activity/heartbeat")
+def student_activity_heartbeat(
+    payload: ActivityIn, ctx: StudentContext = Depends(require_student_write)
+) -> dict[str, Any]:
+    """Mark the student active while an attempt session is open.
+
+    The Mini App sends this only while the student is genuinely present in a
+    session (the tab is visible) — the client stops it the moment they leave, so
+    this is not an idle keep-alive. It is what makes the live feed show who is
+    answering *right now* between two answers.
+    """
+    ctx.services.activity.touch(
+        ctx.id,
+        activity.EVENT_VIEW,
+        exam_id=payload.exam_id,
+        question_id=payload.question_id,
+    )
     return {"ok": True}
 
 

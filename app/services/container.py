@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from app.core.config import Settings
 from app.scheduler.engine import SchedulerEngine
 from app.scheduler.jobs import ScheduleRunner
+from app.services.activity_service import ActivityService
 from app.services.analytics_service import AnalyticsService
 from app.services.audit_service import AuditService
 from app.services.backup_service import BackupService
@@ -57,6 +58,7 @@ class Services:
     exams: ExamService
     attempts: ExamAttemptService
     notifications: NotificationService
+    activity: ActivityService
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -103,6 +105,7 @@ def build_services(settings: Settings) -> Services:
     notifications = NotificationService(
         storage, audit, students, exams, transport, settings=app_settings
     )
+    activity = ActivityService(storage, audit)
 
     runner = ScheduleRunner(
         questions=questions,
@@ -113,7 +116,7 @@ def build_services(settings: Settings) -> Services:
     )
     engine = SchedulerEngine(
         runner, schedules, analytics, app_settings, transport,
-        attempts=attempts, notifications=notifications,
+        attempts=attempts, notifications=notifications, activity=activity,
     )
     bot = BotManager(
         {
@@ -151,4 +154,5 @@ def build_services(settings: Settings) -> Services:
         exams=exams,
         attempts=attempts,
         notifications=notifications,
+        activity=activity,
     )

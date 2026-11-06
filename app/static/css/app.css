@@ -452,6 +452,46 @@ tr[data-question-id] { cursor: context-menu; }
   margin-top: 6px;
 }
 .perm-grid .form-check { margin: 0; }
+.perm-group { margin-top: 10px; }
+.perm-group:first-of-type { margin-top: 6px; }
+.perm-group-title {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--accent);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+.perm-group-title i { margin-inline-end: 4px; }
+
+/* Live activity: online dot + the feed list on the exam/attempts pages */
+.online-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, .18);
+  margin-inline-end: 6px;
+  vertical-align: middle;
+  animation: online-pulse 1.8s ease-in-out infinite;
+}
+@keyframes online-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(52, 211, 153, .18); }
+  50% { box-shadow: 0 0 0 6px rgba(52, 211, 153, .06); }
+}
+.live-list { display: flex; flex-direction: column; gap: 6px; }
+.live-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-panel-soft);
+  font-size: .9rem;
+}
+.live-row .live-name { font-weight: 600; }
+.live-row .live-meta { color: var(--text-muted); font-size: .8rem; margin-inline-start: auto; }
 
 /* Bulk-publish modal: the list of selected questions */
 .bp-list {

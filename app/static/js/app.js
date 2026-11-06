@@ -1670,6 +1670,68 @@ const TQM = (() => {
     if (label) label.textContent = '0';
   }
 
+  // ---------- Live student activity ----------
+  // Polls the activity feed while the exam detail / attempts page is open and
+  // re-renders the list. Action-based: the server only counts a student whose
+  // last action is within the TTL, so nobody idle is shown as active.
+  function initLiveActivity() {
+    const panel = document.getElementById('livePanel');
+    const list = document.getElementById('liveList');
+    if (!panel || !list) return;
+    const examId = panel.dataset.examId || '';
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+    let timer = null;
+
+    function ago(seconds) {
+      const s = Math.max(0, Number(seconds) || 0);
+      if (s < 60) return `قبل ${s} ثانية`;
+      const m = Math.floor(s / 60);
+      return `قبل ${m} دقيقة`;
+    }
+
+    function paint(data) {
+      const countEl = document.getElementById('liveActiveCount');
+      if (countEl) countEl.textContent = data.count;
+      const solvedEl = document.getElementById('liveSolvedCount');
+      if (solvedEl) solvedEl.textContent = data.solved_now ?? 0;
+      list.innerHTML = '';
+      if (!data.active || !data.active.length) {
+        list.innerHTML = '<p class="empty-state py-3" id="liveEmpty"><i class="bi bi-people"></i><br>لا يوجد طلاب نشطون الآن.</p>';
+        return;
+      }
+      data.active.forEach((row) => {
+        const node = document.createElement('div');
+        node.className = 'live-row';
+        const exam = row.exam_title ? `<span class="live-meta">${esc(row.exam_title)}</span>` : '';
+        node.innerHTML = `<span class="online-dot"></span>
+          <span class="live-name">${esc(row.student_name)}</span>
+          <span class="badge text-bg-warning">${esc(row.event_label)}</span>
+          ${exam}
+          <span class="live-meta">${esc(ago(row.seconds_ago))}</span>`;
+        list.appendChild(node);
+      });
+    }
+
+    async function refresh() {
+      const query = examId ? `?exam_id=${encodeURIComponent(examId)}` : '';
+      const result = await api(`/api/admin/activity${query}`);
+      if (result.ok) paint(result.data);
+    }
+
+    async function tick() {
+      // A hidden tab does not need to keep polling; resume on visibilitychange.
+      if (document.hidden) return;
+      await refresh();
+    }
+
+    refresh();
+    timer = setInterval(tick, 10000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    window.addEventListener('beforeunload', () => { if (timer) clearInterval(timer); });
+  }
+
   return {
     api, toast, quickAction, publishNow, previewQuestion, duplicateQuestion, deleteQuestion,
     bulk, initQuestionTable, initImportForm, initEditor, initSidebar,
@@ -1683,5 +1745,6 @@ const TQM = (() => {
     userbotForm, showUserbotForm, hideUserbotForm, toggleUserbot, setDefaultUserbot,
     deleteUserbot, userbotLoginBox, testUserbot,
     examAction, examDelete, initExamForm, initExamAnalytics, selectAllVisible, clearExamQuestions,
+    initLiveActivity,
   };
 })();

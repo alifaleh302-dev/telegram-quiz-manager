@@ -39,8 +39,24 @@
   <span><strong>{{ stats.average }}%</strong> المتوسط</span>
   <span><strong>{{ stats.highest }}%</strong> الأعلى</span>
   <span><strong>{{ stats.lowest }}%</strong> الأدنى</span>
+  <span class="text-warning"><i class="bi bi-broadcast"></i>
+    <strong id="liveActiveCount">{{ active_count }}</strong> نشط الآن</span>
 </div>
 <p class="hint mb-3">المتوسط والأعلى والأدنى محسوبة على <strong>أفضل نتيجة</strong> لكل طالب، لا على كل محاولة.</p>
+
+<div class="panel" id="livePanel" data-exam-id="{{ exam.id }}">
+  <div class="panel-header">
+    <h2><i class="bi bi-activity"></i> النشاط المباشر
+      <span class="badge text-bg-warning" id="liveActiveCount">{{ active_count }}</span></h2>
+    <span class="hint">يُحدَّث تلقائياً — يُعد الطالب نشطاً بعد آخر إجراء خلال {{ (activity_ttl // 60) }} دقائق</span>
+  </div>
+  <div class="panel-body">
+    <p class="hint mb-2">منهم أنهوا للتو: <strong id="liveSolvedCount">0</strong></p>
+    <div id="liveList" class="live-list">
+      <p class="empty-state py-3" id="liveEmpty"><i class="bi bi-people"></i><br>لا يوجد طلاب نشطون الآن.</p>
+    </div>
+  </div>
+</div>
 
 <div class="row g-3">
   <div class="col-lg-5">
@@ -102,7 +118,15 @@
         <tbody>
           {% for attempt in attempts %}
           <tr>
-            <td>{{ attempt.student.name if attempt.student else attempt.student_id }}</td>
+            <td>
+              {% if attempt.activity %}
+              <span class="online-dot" title="نشط الآن"></span>
+              {% endif %}
+              {{ attempt.student.name if attempt.student else attempt.student_id }}
+              {% if attempt.activity %}
+              <span class="badge text-bg-warning">{{ attempt.activity.event_label if attempt.activity.event_label else '' }}</span>
+              {% endif %}
+            </td>
             <td>#{{ attempt.attempt_number }}</td>
             <td>
               {% set badges = {'in_progress':'info','submitted':'success','expired':'warning','abandoned':'secondary'} %}
@@ -122,4 +146,10 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => TQM.initLiveActivity());
+</script>
 {% endblock %}
