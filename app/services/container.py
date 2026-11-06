@@ -22,7 +22,8 @@ from app.services.settings_service import SettingsService
 from app.services.student_service import StudentService
 from app.services.user_service import UserService
 from app.services.userbot_service import UserbotAccountService
-from app.storage.sqlite_manager import Storage
+from app.storage.base import StorageBackend
+from app.storage.factory import build_storage
 from app.telegram.bot import BotManager
 from app.telegram.telegram_client import TelegramClient
 from app.telegram.transport import TransportRouter
@@ -32,7 +33,7 @@ from app.telegram.userbot_manager import UserbotManager
 @dataclass
 class Services:
     settings: Settings
-    storage: Storage
+    storage: StorageBackend
     audit: AuditService
     questions: QuestionService
     channels: ChannelService
@@ -75,7 +76,7 @@ class Services:
 def build_services(settings: Settings) -> Services:
     settings.ensure_directories()
 
-    storage = Storage(settings.data_dir, settings.backup_dir)
+    storage = build_storage(settings)
     audit = AuditService(storage)
     questions = QuestionService(storage, audit)
     channels = ChannelService(storage, audit)

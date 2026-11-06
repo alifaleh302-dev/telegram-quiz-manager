@@ -101,7 +101,7 @@ def require_student(request: Request) -> StudentContext:
     return student_from_request(request)
 
 
-async def require_student_write(
+def require_student_write(
     request: Request,
     x_student_token: str | None = Header(default=None, alias=STUDENT_TOKEN_HEADER),
     x_telegram_init_data: str | None = Header(default=None, alias=INIT_DATA_HEADER),

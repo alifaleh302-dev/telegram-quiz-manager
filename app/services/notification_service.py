@@ -20,7 +20,7 @@ from app.core.messages import render as render_message
 from app.services.audit_service import AuditService
 from app.services.exam_service import ExamService
 from app.services.student_service import StudentService
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 
 logger = get_logger(__name__)
 

@@ -55,6 +55,17 @@ class Settings(BaseSettings):
     # --- Scheduling ---
     default_timezone: str = "Asia/Riyadh"
 
+    # --- Database ---
+    # When set (e.g. Railway's ``${{Postgres.DATABASE_URL}}``), the app uses
+    # PostgreSQL; when empty it falls back to the local SQLite file. This is the
+    # only switch between the two storage backends.
+    database_url: str = ""
+    # Upper bound on pooled PostgreSQL connections per process.
+    db_pool_max: int = 10
+    # Optional PostgreSQL schema (tests use it to isolate each run). Empty uses
+    # the server default ("public").
+    db_schema: str = ""
+
     # --- Session ---
     session_cookie_secure: bool = False
     session_max_age: int = 12 * 60 * 60
@@ -87,6 +98,10 @@ class Settings(BaseSettings):
     @property
     def backup_dir(self) -> Path:
         return self.data_dir / "backups"
+
+    @property
+    def uses_postgres(self) -> bool:
+        return bool(self.database_url.strip())
 
     @property
     def log_dir(self) -> Path:

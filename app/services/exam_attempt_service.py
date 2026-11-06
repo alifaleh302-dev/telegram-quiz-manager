@@ -21,7 +21,7 @@ from typing import Any
 
 from app.services.audit_service import AuditService
 from app.services.exam_service import ExamService, STATE_ARCHIVED, STATE_CLOSED
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
 STATUS_IN_PROGRESS = "in_progress"
@@ -652,10 +652,56 @@ class ExamAttemptService:
     def student_state(self, exam: dict[str, Any], student_id: str) -> dict[str, Any]:
         """Per-student view of one exam (new/not_started/in_progress/completed/...)."""
         attempts = self.attempts_for_student(student_id, exam_id=exam["id"])
-        submitted = [a for a in attempts if a.get("status") in (STATUS_SUBMITTED, STATUS_EXPIRED)]
-        active = self.active_attempt(exam["id"], student_id)
-        remaining = self.remaining_attempts(exam, student_id)
         viewed = self._viewed(exam["id"], student_id)
+        return self._state_from(exam, attempts, viewed)
+
+    def states_for_student(
+        self, student_id: str, exams: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Per-student state for *every* exam, in one pass over the data.
+
+        The library/dashboard endpoints need this for each exam in the list.
+        Computing it per exam would rescan the whole attempts and viewed-state
+        collections once per exam — quadratic in the number of exams. Here each
+        collection is read once and grouped in memory.
+        """
+        attempts_doc = self._storage.attempts.read()["attempts"]
+        states_doc = self._storage.student_exam_state.read()["states"]
+
+        by_exam: dict[str, list[dict[str, Any]]] = {}
+        for attempt in attempts_doc:
+            if attempt.get("student_id") == student_id:
+                by_exam.setdefault(attempt["exam_id"], []).append(attempt)
+        viewed = {
+            state["exam_id"]
+            for state in states_doc
+            if state.get("student_id") == student_id and state.get("viewed")
+        }
+
+        result: dict[str, dict[str, Any]] = {}
+        for exam in exams:
+            rows = sorted(
+                by_exam.get(exam["id"], []),
+                key=lambda a: int(a.get("attempt_number", 0)),
+            )
+            result[exam["id"]] = self._state_from(exam, rows, exam["id"] in viewed)
+        return result
+
+    def _state_from(
+        self,
+        exam: dict[str, Any],
+        attempts: list[dict[str, Any]],
+        viewed: bool,
+    ) -> dict[str, Any]:
+        """Pure state derivation from already-read rows."""
+        submitted = [
+            a for a in attempts if a.get("status") in (STATUS_SUBMITTED, STATUS_EXPIRED)
+        ]
+        active = next(
+            (a for a in reversed(attempts) if a.get("status") == STATUS_IN_PROGRESS),
+            None,
+        )
+        remaining = self._remaining_from(exam, attempts)
 
         if active is not None:
             label = "in_progress"
@@ -683,6 +729,23 @@ class ExamAttemptService:
             "active_attempt_id": active["id"] if active else None,
             "last_attempt_id": submitted[-1]["id"] if submitted else None,
         }
+
+    def _remaining_from(
+        self, exam: dict[str, Any], attempts: list[dict[str, Any]]
+    ) -> int | None:
+        """Remaining attempts from already-read rows (``None`` = unlimited)."""
+        limit = int(exam.get("max_attempts", 1) or 0)
+        if limit == 0:
+            return None
+        if exam.get("count_abandoned_attempts", True):
+            counting = attempts
+        else:
+            counting = [
+                a
+                for a in attempts
+                if a.get("status") in (STATUS_IN_PROGRESS, STATUS_SUBMITTED)
+            ]
+        return max(0, limit - len(counting))
 
     # --- viewed state ------------------------------------------------------
     def _viewed(self, exam_id: str, student_id: str) -> bool:

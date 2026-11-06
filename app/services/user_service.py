@@ -20,7 +20,7 @@ from app.core.permissions import (
 )
 from app.core.security import hash_password, verify_password
 from app.services.audit_service import AuditService
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

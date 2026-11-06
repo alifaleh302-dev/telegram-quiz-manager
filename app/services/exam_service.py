@@ -22,7 +22,7 @@ from typing import Any
 
 from app.services.audit_service import AuditService
 from app.services.question_service import QuestionService
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 from app.storage.validators import ValidationError, validate_exam_payload
 
 # Student-facing effective states (derived, never stored).
@@ -302,6 +302,30 @@ class ExamService:
 
     def question_count(self, exam_id: str) -> int:
         return len(self.questions_for(exam_id))
+
+    def question_counts(self, exam_ids: list[str]) -> dict[str, int]:
+        """Question count per exam, from a single pass over the rows.
+
+        ``question_count`` re-reads the whole exam-questions collection and the
+        exams collection for every exam, which is quadratic when listing a
+        library. This reads each collection once and counts in memory.
+        """
+        wanted = set(exam_ids)
+        if not wanted:
+            return {}
+        versions = {
+            e["id"]: int(e.get("question_version", 0))
+            for e in self._all()
+            if e["id"] in wanted
+        }
+        counts: dict[str, int] = {exam_id: 0 for exam_id in wanted}
+        for row in self._all_exam_questions():
+            exam_id = row["exam_id"]
+            if exam_id in wanted and int(row.get("version", 0)) == versions.get(
+                exam_id, 0
+            ):
+                counts[exam_id] += 1
+        return counts
 
     # --- lifecycle ---------------------------------------------------------
     def _set_status(

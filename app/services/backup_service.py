@@ -1,10 +1,10 @@
-"""Backup and restore of the SQLite database.
+"""Backup and restore of the application database.
 
-A snapshot is a consistent copy of ``data/tqm.db`` produced with ``VACUUM INTO``
-while the app is running. The export/import endpoints speak the same ZIP format
-as before, so an archive downloaded from an older version (a bag of ``*.json``
-files) can still be restored: those files are merged back through the normal
-storage layer.
+A snapshot is a consistent copy of the database taken while the app is running:
+a ``VACUUM INTO`` copy for SQLite, or a JSON export of every collection for
+PostgreSQL. The export/import endpoints speak the same ZIP format as before, so
+an archive downloaded from an older version (a bag of ``*.json`` files) can
+still be restored: those files are merged back through the normal storage layer.
 """
 
 from __future__ import annotations
@@ -19,18 +19,21 @@ from pathlib import Path
 from typing import Any
 
 from app.services.audit_service import AuditService
-from app.storage.sqlite_manager import LEGACY_FILES, Storage
+from app.storage.base import LEGACY_FILES, StorageBackend
 from app.storage.validators import ValidationError
 
-DB_FILENAME = "tqm.db"
 # Kept so an archive from a pre-SQLite version can still be imported.
 LEGACY_DATA_FILES = tuple(LEGACY_FILES.values())
 
 
 class BackupService:
-    def __init__(self, storage: Storage, audit: AuditService) -> None:
+    def __init__(self, storage: StorageBackend, audit: AuditService) -> None:
         self._storage = storage
         self._audit = audit
+
+    @property
+    def _snapshot_filename(self) -> str:
+        return self._storage.snapshot_filename
 
     def list_backups(self) -> list[dict[str, Any]]:
         root = self._storage.backup_dir
@@ -56,7 +59,7 @@ class BackupService:
         name = f"{stamp}-{label}" if label else stamp
         target = self._storage.backup_dir / name
         target.mkdir(parents=True, exist_ok=True)
-        self._storage.db.snapshot(target / DB_FILENAME)
+        self._storage.snapshot(target / self._snapshot_filename)
         self._audit.record(
             "backup.created",
             actor=actor,
@@ -73,10 +76,10 @@ class BackupService:
         """
         buffer = io.BytesIO()
         with tempfile.TemporaryDirectory() as tmp:
-            snapshot = Path(tmp) / DB_FILENAME
-            self._storage.db.snapshot(snapshot)
+            snapshot = Path(tmp) / self._snapshot_filename
+            self._storage.snapshot(snapshot)
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-                archive.write(snapshot, arcname=DB_FILENAME)
+                archive.write(snapshot, arcname=self._snapshot_filename)
         return buffer.getvalue()
 
     def restore_from_archive(
@@ -93,9 +96,15 @@ class BackupService:
         try:
             with zipfile.ZipFile(io.BytesIO(payload)) as archive:
                 names = set(archive.namelist())
-                if DB_FILENAME in names:
-                    self._storage.db.restore_from_bytes(archive.read(DB_FILENAME))
-                    restored = [DB_FILENAME]
+                if self._snapshot_filename in names:
+                    self._storage.restore_from_bytes(
+                        archive.read(self._snapshot_filename)
+                    )
+                    restored = [self._snapshot_filename]
+                elif "tqm.db" in names:
+                    # An archive exported by the SQLite backend.
+                    self._storage.restore_from_bytes(archive.read("tqm.db"))
+                    restored = ["tqm.db"]
                 else:
                     restored = self._restore_legacy(archive, names)
         except zipfile.BadZipFile as exc:
@@ -136,19 +145,26 @@ class BackupService:
         source = self._storage.backup_dir / name
         if not source.is_dir():
             raise ValidationError("النسخة الاحتياطية المطلوبة غير موجودة.")
-        database = source / DB_FILENAME
+        database = source / self._snapshot_filename
         if not database.exists():
-            raise ValidationError("النسخة الاحتياطية لا تحتوي على قاعدة بيانات صالحة.")
+            # A snapshot written by the SQLite backend.
+            legacy = source / "tqm.db"
+            if legacy.exists():
+                database = legacy
+            else:
+                raise ValidationError(
+                    "النسخة الاحتياطية لا تحتوي على قاعدة بيانات صالحة."
+                )
 
         self.create_snapshot(label="pre-restore", actor=actor)
-        self._storage.db.restore_from_path(database)
+        self._storage.restore_from_path(database, actor=actor)
         self._audit.record(
             "backup.restored",
             actor=actor,
             level="warning",
             message=f"استعادة النسخة {name}",
         )
-        return {"restored": [DB_FILENAME], "source": name}
+        return {"restored": [database.name], "source": name}
 
     def prune(self, keep: int = 30) -> int:
         root = self._storage.backup_dir

@@ -198,7 +198,23 @@ def main() -> int:
 
 
 def _read_exam_ids(base_dir: Path) -> list[str]:
+    """Exam ids from whichever backend the server is using.
+
+    With ``DATABASE_URL`` set the server writes to PostgreSQL, so the SQLite
+    file does not exist; read the ``exams`` table over the same connection.
+    """
     import json
+    import os
+
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if database_url:
+        import psycopg
+
+        with psycopg.connect(database_url) as con:
+            with con.cursor() as cur:
+                cur.execute("SELECT value FROM exams")
+                return [row[0]["id"] for row in cur.fetchall()]
+
     import sqlite3
 
     con = sqlite3.connect(base_dir / "data" / "tqm.db")

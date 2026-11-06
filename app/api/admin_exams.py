@@ -87,7 +87,7 @@ def _notify_if_live(services: Any, exam: dict[str, Any]) -> int:
 # --- exams -----------------------------------------------------------------
 
 @router.get("/exams")
-async def admin_list_exams(
+def admin_list_exams(
     request: Request,
     _: Any = Depends(require_permission("exams")),
     status: str = "",
@@ -103,7 +103,7 @@ async def admin_list_exams(
 
 
 @router.post("/exams", status_code=201)
-async def admin_create_exam(
+def admin_create_exam(
     request: Request, payload: ExamIn, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -114,7 +114,7 @@ async def admin_create_exam(
 
 
 @router.get("/exams/{exam_id}")
-async def admin_get_exam(
+def admin_get_exam(
     request: Request, exam_id: str, _: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -128,7 +128,7 @@ async def admin_get_exam(
 
 
 @router.put("/exams/{exam_id}")
-async def admin_update_exam(
+def admin_update_exam(
     request: Request,
     exam_id: str,
     payload: ExamIn,
@@ -152,7 +152,7 @@ async def admin_update_exam(
 
 
 @router.delete("/exams/{exam_id}")
-async def admin_delete_exam(
+def admin_delete_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -161,7 +161,7 @@ async def admin_delete_exam(
 
 
 @router.post("/exams/{exam_id}/questions")
-async def admin_set_exam_questions(
+def admin_set_exam_questions(
     request: Request,
     exam_id: str,
     payload: ExamQuestionsIn,
@@ -172,7 +172,7 @@ async def admin_set_exam_questions(
 
 
 @router.post("/exams/{exam_id}/publish")
-async def admin_publish_exam(
+def admin_publish_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -183,7 +183,7 @@ async def admin_publish_exam(
 
 
 @router.post("/exams/{exam_id}/notify")
-async def admin_notify_exam(
+def admin_notify_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     """Manually (re)send the 'new exam' notice to every eligible student.
@@ -202,7 +202,7 @@ async def admin_notify_exam(
 
 
 @router.post("/exams/{exam_id}/close")
-async def admin_close_exam(
+def admin_close_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -210,7 +210,7 @@ async def admin_close_exam(
 
 
 @router.post("/exams/{exam_id}/archive")
-async def admin_archive_exam(
+def admin_archive_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -218,7 +218,7 @@ async def admin_archive_exam(
 
 
 @router.post("/exams/{exam_id}/reopen")
-async def admin_reopen_exam(
+def admin_reopen_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -226,7 +226,7 @@ async def admin_reopen_exam(
 
 
 @router.get("/exams/{exam_id}/attempts")
-async def admin_exam_attempts(
+def admin_exam_attempts(
     request: Request, exam_id: str, _: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -240,7 +240,7 @@ async def admin_exam_attempts(
 # --- students --------------------------------------------------------------
 
 @router.get("/students")
-async def admin_list_students(
+def admin_list_students(
     request: Request, _: Any = Depends(require_permission("exams")), search: str = ""
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -264,7 +264,7 @@ async def admin_list_students(
 
 
 @router.get("/students/{student_id}/attempts")
-async def admin_student_attempts(
+def admin_student_attempts(
     request: Request, student_id: str, _: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -280,7 +280,7 @@ async def admin_student_attempts(
 
 
 @router.post("/students/{student_id}/exams/{exam_id}/reset")
-async def admin_reset_attempts(
+def admin_reset_attempts(
     request: Request,
     student_id: str,
     exam_id: str,
@@ -311,7 +311,7 @@ def _search_scopes(services: Any, search: str) -> tuple[set[str], set[str]]:
 
 
 @router.get("/attempts")
-async def admin_list_attempts(
+def admin_list_attempts(
     request: Request,
     _: Any = Depends(require_permission("exams")),
     status: str = "",
@@ -336,7 +336,7 @@ async def admin_list_attempts(
 
 
 @router.get("/attempts/{attempt_id}")
-async def admin_attempt_detail(
+def admin_attempt_detail(
     request: Request, attempt_id: str, _: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -350,7 +350,7 @@ async def admin_attempt_detail(
 # --- analytics -------------------------------------------------------------
 
 @router.get("/analytics")
-async def admin_exam_analytics(
+def admin_exam_analytics(
     request: Request, _: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
@@ -483,7 +483,7 @@ def _htmx_guard(session: Any) -> Response | None:
 
 
 @page_router.get("/exam-analytics", response_class=HTMLResponse)
-async def exam_analytics_page(
+def exam_analytics_page(
     request: Request,
     session: Any = Depends(require_page_permission("exams")),
     exam: str = "",
@@ -502,7 +502,7 @@ async def exam_analytics_page(
 
 
 @page_router.get("/exam-analytics/overview", response_class=HTMLResponse)
-async def exam_analytics_overview(
+def exam_analytics_overview(
     request: Request, session: Any = Depends(require_page_permission("exams"))
 ) -> Response:
     guard = _htmx_guard(session)
@@ -518,7 +518,7 @@ async def exam_analytics_overview(
 
 
 @page_router.get("/exam-analytics/detail/{exam_id}", response_class=HTMLResponse)
-async def exam_analytics_detail(
+def exam_analytics_detail(
     request: Request,
     exam_id: str,
     session: Any = Depends(require_page_permission("exams")),
@@ -536,7 +536,7 @@ async def exam_analytics_detail(
 
 
 @page_router.get("/exams", response_class=HTMLResponse)
-async def exams_page(
+def exams_page(
     request: Request,
     session: Any = Depends(require_page_permission("exams")),
     status: str = "",
@@ -568,7 +568,7 @@ async def exams_page(
 
 
 @page_router.get("/exams/new", response_class=HTMLResponse)
-async def exam_new_page(
+def exam_new_page(
     request: Request, session: Any = Depends(require_page_permission("exams"))
 ) -> Response:
     if isinstance(session, RedirectResponse):
@@ -590,7 +590,7 @@ async def exam_new_page(
 
 
 @page_router.get("/exams/{exam_id}", response_class=HTMLResponse)
-async def exam_detail_page(
+def exam_detail_page(
     request: Request, exam_id: str, session: Any = Depends(require_page_permission("exams"))
 ) -> Response:
     if isinstance(session, RedirectResponse):
@@ -619,7 +619,7 @@ async def exam_detail_page(
 
 
 @page_router.get("/exams/{exam_id}/edit", response_class=HTMLResponse)
-async def exam_edit_page(
+def exam_edit_page(
     request: Request, exam_id: str, session: Any = Depends(require_page_permission("exams"))
 ) -> Response:
     if isinstance(session, RedirectResponse):
@@ -644,7 +644,7 @@ async def exam_edit_page(
 
 
 @page_router.get("/students", response_class=HTMLResponse)
-async def students_page(
+def students_page(
     request: Request,
     session: Any = Depends(require_page_permission("exams")),
     search: str = "",
@@ -676,7 +676,7 @@ async def students_page(
 
 
 @page_router.get("/attempts", response_class=HTMLResponse)
-async def attempts_page(
+def attempts_page(
     request: Request,
     session: Any = Depends(require_page_permission("exams")),
     status: str = "",

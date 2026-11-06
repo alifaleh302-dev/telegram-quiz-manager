@@ -27,7 +27,7 @@ from app.services.audit_service import AuditService
 from app.services.channel_service import ChannelService
 from app.services.question_service import QuestionService
 from app.services.settings_service import SettingsService
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 from app.storage.validators import ValidationError
 from app.telegram.telegram_client import PublishResult, TelegramClient
 

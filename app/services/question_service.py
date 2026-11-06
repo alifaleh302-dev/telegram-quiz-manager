@@ -7,7 +7,7 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.services.audit_service import AuditService
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 from app.storage.validators import (
     ValidationError,
     normalize_imported_question,

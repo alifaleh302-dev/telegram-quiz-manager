@@ -57,6 +57,35 @@ class _TG:
         self.photo_url = ""
 
 
+def test_states_for_student_matches_student_state(svc) -> None:
+    """The batched per-student state must equal the per-exam computation."""
+    q1 = _ready(svc, "س1")
+    q2 = _ready(svc, "س2")
+    exam_a = svc.exams.create({"title": "أ", "access_mode": "always"}, [q1["id"]])
+    exam_b = svc.exams.create({"title": "ب", "access_mode": "always"}, [q2["id"]])
+    exam_c = svc.exams.create({"title": "ج", "access_mode": "always"}, [q1["id"]])
+    student = svc.students.touch(_TG(800800))
+    svc.exams.publish(exam_a["id"])
+    svc.attempts.start(exam_a["id"], student["id"])
+    svc.attempts.mark_viewed(exam_c["id"], student["id"])
+
+    exams = [exam_a, exam_b, exam_c]
+    batched = svc.attempts.states_for_student(student["id"], exams)
+    for exam in exams:
+        assert batched[exam["id"]] == svc.attempts.student_state(exam, student["id"])
+
+
+def test_question_counts_matches_question_count(svc) -> None:
+    q1 = _ready(svc, "س1")
+    q2 = _ready(svc, "س2")
+    exam_a = svc.exams.create({"title": "أ", "access_mode": "always"}, [q1["id"], q2["id"]])
+    exam_b = svc.exams.create({"title": "ب", "access_mode": "always"}, [q1["id"]])
+    counts = svc.exams.question_counts([exam_a["id"], exam_b["id"]])
+    assert counts[exam_a["id"]] == svc.exams.question_count(exam_a["id"]) == 2
+    assert counts[exam_b["id"]] == svc.exams.question_count(exam_b["id"]) == 1
+    assert svc.exams.question_counts([]) == {}
+
+
 def test_exam_snapshot_survives_bank_edit(svc) -> None:
     q = _ready(svc, "2+2؟", ["3", "4"], 1)
     exam = svc.exams.create({"title": "حساب", "access_mode": "always"}, [q["id"]])

@@ -11,7 +11,7 @@ from app.core.messages import DEFAULTS as DEFAULT_MESSAGES
 from app.core.messages import TEMPLATE_KEYS
 from app.core.timezones import is_valid_timezone
 from app.services.audit_service import AuditService
-from app.storage.sqlite_manager import Storage
+from app.storage.base import StorageBackend as Storage
 from app.storage.validators import NOTIFICATION_TYPES, ValidationError
 
 _EDITABLE_KEYS = {

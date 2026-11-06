@@ -21,7 +21,7 @@ from typing import Any
 from app.services.audit_service import AuditService
 from app.services.channel_service import ChannelService
 from app.services.question_service import QuestionService
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 
 
 def _day(iso: str) -> str:

@@ -33,12 +33,26 @@ def test_validate_bot_token_rejects_bad_input(bad: str) -> None:
 
 # --- encrypted storage -----------------------------------------------------
 
+def _raw_secrets_blob(services) -> bytes:
+    """The on-disk/at-rest representation of the secrets collection."""
+    database = services.storage.db
+    path = getattr(database, "path", None)
+    if path is not None:  # SQLite: the whole file.
+        return Path(path).read_bytes()
+    # PostgreSQL: the stored jsonb value for the secrets document.
+    with database.pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value::text FROM documents WHERE key = %s", ("secrets",))
+            row = cur.fetchone()
+    return (row["value"] if row else "").encode("utf-8")
+
+
 def test_set_bot_token_encrypts_at_rest(services) -> None:
     store: SecretStore = services.secrets
     store.set_bot_token(FAKE_TOKEN)
 
-    # The token must never be stored in clear anywhere in the database file.
-    raw = services.storage.db.path.read_bytes()
+    # The token must never be stored in clear anywhere in the database.
+    raw = _raw_secrets_blob(services)
     assert FAKE_TOKEN.encode("utf-8") not in raw, "the token must never be stored in clear"
 
     document = services.storage.secrets.read()

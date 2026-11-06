@@ -1,10 +1,10 @@
 """SQLite storage: one database file, atomic transactions, snapshot backups.
 
-This replaces the per-collection JSON files. Every logical collection is kept
-in the *same* :class:`Database` file but in its own table, so a write to one
-collection never rewrites another, and SQLite's own journal guarantees that a
-crash mid-write cannot leave a half-written file behind (the failure mode the
-old ``.tmp`` + ``os.replace`` dance had to work around by hand).
+Every logical collection is kept in the *same* :class:`Database` file but in its
+own table, so a write to one collection never rewrites another, and SQLite's own
+journal guarantees that a crash mid-write cannot leave a half-written file
+behind (the failure mode the old ``.tmp`` + ``os.replace`` dance had to work
+around by hand).
 
 Layout
 ------
@@ -26,6 +26,10 @@ The app is single-process. One connection is opened with
 re-entrant lock, so two threads can never interleave a read-modify-write. Writes
 run inside an explicit ``BEGIN IMMEDIATE`` transaction, which also makes them
 atomic across the whole collection.
+
+For a deployment that needs to scale past one worker, see
+:mod:`app.storage.postgres_manager`, which pools connections and writes only the
+rows that changed.
 """
 
 from __future__ import annotations
@@ -33,92 +37,43 @@ from __future__ import annotations
 import copy
 import json
 import os
-import re
 import shutil
 import sqlite3
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 
 from app.core.logging import get_logger
-from app.core.messages import DEFAULTS as DEFAULT_MESSAGES
+from app.storage.base import (
+    LEGACY_FILES,
+    ROWS_KEYS,
+    ROWS_TABLES,
+    CollectionStore,
+    StorageBackend,
+    StorageError,
+    checked_table,
+    collection_name_for,
+    default_collections,
+    utc_now_iso,
+)
 
 logger = get_logger(__name__)
 
 T = TypeVar("T")
 
-# The tables that hold one row per list element. Collections absent from this
-# map (settings, users, secrets) keep their list — if any — inside the document.
-ROWS_TABLES: dict[str, str] = {
-    "questions": "questions",
-    "channels": "channels",
-    "schedules": "schedules",
-    "history": "history",
-    "audit_log": "audit_log",
-    "poll_results": "poll_results",
-    "poll_answers": "poll_answers",
-    "userbot_accounts": "userbot_accounts",
-    # Exam platform (students, exams, attempts). New collections are additive:
-    # their tables are created by ``_schema()`` on open, so no migration step is
-    # needed and the existing collections are untouched.
-    "students": "students",
-    "exams": "exams",
-    "exam_questions": "exam_questions",
-    "attempts": "attempts",
-    "attempt_answers": "attempt_answers",
-    "student_exam_state": "student_exam_state",
-    "notifications": "notifications",
-    "exam_admin_logs": "exam_admin_logs",
-}
-
-# The key of the list inside each collection's document.
-ROWS_KEYS: dict[str, str] = {
-    "questions": "questions",
-    "channels": "channels",
-    "schedules": "schedules",
-    "history": "history",
-    "audit_log": "entries",
-    "poll_results": "results",
-    "poll_answers": "answers",
-    "userbot_accounts": "accounts",
-    "students": "students",
-    "exams": "exams",
-    "exam_questions": "exam_questions",
-    "attempts": "attempts",
-    "attempt_answers": "attempt_answers",
-    "student_exam_state": "states",
-    "notifications": "notifications",
-    "exam_admin_logs": "entries",
-}
-
-# The JSON file each collection used to live in, for one-time migration.
-LEGACY_FILES: dict[str, str] = {
-    "questions": "questions.json",
-    "channels": "channels.json",
-    "schedules": "schedules.json",
-    "history": "publishing_history.json",
-    "settings": "settings.json",
-    "users": "users.json",
-    "secrets": "secrets.json",
-    "audit_log": "audit_log.json",
-    "poll_results": "poll_results.json",
-    "poll_answers": "poll_answers.json",
-    "userbot_accounts": "userbot_accounts.json",
-}
-
-_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
-
-
-def utc_now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-class StorageError(Exception):
-    """Raised when the database cannot be read or written safely."""
+__all__ = [
+    "Database",
+    "SqliteStore",
+    "Storage",
+    "StorageError",
+    "LEGACY_FILES",
+    "ROWS_KEYS",
+    "ROWS_TABLES",
+    "utc_now_iso",
+]
 
 
 def _schema() -> str:
@@ -132,8 +87,7 @@ def _schema() -> str:
         """
     ]
     for table in sorted(set(ROWS_TABLES.values())):
-        if not _IDENTIFIER_RE.match(table):
-            raise StorageError(f"unsafe table name: {table}")
+        checked_table(table)
         statements.append(
             f"""
             CREATE TABLE IF NOT EXISTS {table} (
@@ -301,7 +255,7 @@ class Database:
             probe.close()
 
 
-class SqliteStore:
+class SqliteStore(CollectionStore):
     """A single collection, exposing the old document read/update/write API.
 
     Services call :meth:`read`, :meth:`update` and :meth:`write` with plain
@@ -399,166 +353,42 @@ class SqliteStore:
         )
 
 
-class Storage:
-    """Owns the database and every collection used by the application."""
+class Storage(StorageBackend):
+    """Owns the SQLite database and every collection used by the application."""
+
+    backend_name = "sqlite"
 
     def __init__(self, data_dir: Path, backup_dir: Path) -> None:
-        self.data_dir = Path(data_dir)
-        self.backup_dir = Path(backup_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
-
+        super().__init__(data_dir, backup_dir)
         self.db = Database(self.data_dir / "tqm.db")
 
-        self.questions = SqliteStore(
-            self.db, "questions", {"version": 1, "counter": 0, "questions": []}
-        )
-        self.channels = SqliteStore(
-            self.db, "channels", {"version": 1, "counter": 0, "channels": []}
-        )
-        self.schedules = SqliteStore(
-            self.db, "schedules", {"version": 1, "counter": 0, "schedules": []}
-        )
-        self.history = SqliteStore(
-            self.db, "history", {"version": 1, "counter": 0, "history": []}
-        )
-        self.settings = SqliteStore(
-            self.db,
-            "settings",
-            {
-                "version": 1,
-                "timezone": "Asia/Riyadh",
-                "publishing_enabled": True,
-                "poll_options": {
-                    "explanation": True,
-                    "open_period": 0,
-                    "anonymous": True,
-                    "allows_multiple_answers": False,
-                },
-                "retry": {"max_attempts": 3, "delay_seconds": 60},
-                "pacing": {"interval_seconds": 4, "max_wait_seconds": 120},
-                "daily_limit": 0,
-                "analytics": {"auto_collect": False, "auto_collect_hours": 6},
-                "transport": {"default_mode": "bot"},
-                "notifications": {
-                    "on_publish": True,
-                    "types": {
-                        "exam_published": True,
-                        "exam_upcoming": True,
-                        "exam_closing_soon": True,
-                        "attempt_completed": True,
-                        "result_available": True,
-                    },
-                },
-                "messages": dict(DEFAULT_MESSAGES),
-                "paused_schedules": [],
-                "state": {},
-            },
-        )
-        self.users = SqliteStore(self.db, "users", {"version": 1, "users": []})
-        self.secrets = SqliteStore(
-            self.db,
-            "secrets",
-            {
-                "version": 1,
-                "telegram_bot_token": None,
-                "telegram_bot_token_updated_at": None,
-                "userbot": {},
-            },
-        )
-        self.audit = SqliteStore(self.db, "audit_log", {"version": 1, "entries": []})
-        self.poll_results = SqliteStore(
-            self.db, "poll_results", {"version": 1, "counter": 0, "results": []}
-        )
-        self.poll_answers = SqliteStore(
-            self.db, "poll_answers", {"version": 1, "counter": 0, "answers": []}
-        )
-        self.userbot_accounts = SqliteStore(
-            self.db, "userbot_accounts", {"version": 1, "counter": 0, "accounts": []}
-        )
-
-        # --- Exam platform -------------------------------------------------
-        self.students = SqliteStore(
-            self.db, "students", {"version": 1, "counter": 0, "students": []}
-        )
-        self.exams = SqliteStore(
-            self.db, "exams", {"version": 1, "counter": 0, "exams": []}
-        )
-        self.exam_questions = SqliteStore(
-            self.db, "exam_questions", {"version": 1, "counter": 0, "exam_questions": []}
-        )
-        self.attempts = SqliteStore(
-            self.db, "attempts", {"version": 1, "counter": 0, "attempts": []}
-        )
-        self.attempt_answers = SqliteStore(
-            self.db, "attempt_answers", {"version": 1, "counter": 0, "attempt_answers": []}
-        )
-        self.student_exam_state = SqliteStore(
-            self.db, "student_exam_state", {"version": 1, "counter": 0, "states": []}
-        )
-        self.notifications = SqliteStore(
-            self.db, "notifications", {"version": 1, "counter": 0, "notifications": []}
-        )
-        self.exam_admin_logs = SqliteStore(
-            self.db, "exam_admin_logs", {"version": 1, "counter": 0, "entries": []}
-        )
+        for attribute, default in default_collections().items():
+            setattr(
+                self,
+                attribute,
+                self.store(collection_name_for(attribute), default),
+            )
 
         self.migrate_from_json()
 
+    def _make_store(self, name: str, default: dict[str, Any]) -> SqliteStore:
+        return SqliteStore(self.db, name, default or {})
+
+    def store(self, name: str, default: dict[str, Any]) -> SqliteStore:
+        return super().store(name, default)  # type: ignore[return-value]
+
     def all_stores(self) -> dict[str, SqliteStore]:
-        return {
-            "questions": self.questions,
-            "channels": self.channels,
-            "schedules": self.schedules,
-            "history": self.history,
-            "settings": self.settings,
-            "users": self.users,
-            "secrets": self.secrets,
-            "audit_log": self.audit,
-            "poll_results": self.poll_results,
-            "poll_answers": self.poll_answers,
-            "userbot_accounts": self.userbot_accounts,
-            "students": self.students,
-            "exams": self.exams,
-            "exam_questions": self.exam_questions,
-            "attempts": self.attempts,
-            "attempt_answers": self.attempt_answers,
-            "student_exam_state": self.student_exam_state,
-            "notifications": self.notifications,
-            "exam_admin_logs": self.exam_admin_logs,
-        }
+        return self._stores  # type: ignore[return-value]
 
-    # --- one-time JSON migration -------------------------------------------
-    def migrate_from_json(self) -> list[str]:
-        """Import legacy ``data/*.json`` files into an empty database.
+    # --- backup / restore --------------------------------------------------
+    def snapshot(self, target: Path) -> None:
+        self.db.snapshot(target)
 
-        Only collections that are still empty are touched, so running this on a
-        database that already holds data is a no-op and the legacy files are
-        never re-imported over live changes.
-        """
-        migrated: list[str] = []
-        for name, store in self.all_stores().items():
-            filename = LEGACY_FILES.get(name)
-            if not filename:
-                continue
-            path = self.data_dir / filename
-            if not path.exists() or not store.is_empty():
-                continue
-            try:
-                raw = path.read_text(encoding="utf-8").strip()
-                document = json.loads(raw) if raw else None
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.warning("could not import %s: %s", filename, exc)
-                continue
-            if not isinstance(document, dict):
-                logger.warning("skipping %s: not a JSON object", filename)
-                continue
-            store.write(document)
-            migrated.append(filename)
-        if migrated:
-            logger.info(
-                "migrated %s legacy JSON file(s) into %s",
-                len(migrated),
-                self.db.path.name,
-            )
-        return migrated
+    def restore_from_path(self, source: Path, *, actor: str = "system") -> None:
+        self.db.restore_from_path(source, actor=actor)
+
+    def restore_from_bytes(self, payload: bytes) -> None:
+        self.db.restore_from_bytes(payload)
+
+    def close(self) -> None:
+        self.db.close()

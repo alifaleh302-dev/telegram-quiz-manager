@@ -17,7 +17,7 @@ from typing import Any
 
 from app.services.audit_service import AuditService
 from app.services.secret_store import SecretStore, validate_api_id, validate_api_hash
-from app.storage.sqlite_manager import Storage, utc_now_iso
+from app.storage.base import StorageBackend as Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
 # Account lifecycle: a freshly created account has no session yet; ``active``

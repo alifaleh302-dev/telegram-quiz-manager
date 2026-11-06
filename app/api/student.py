@@ -41,9 +41,19 @@ class NotificationPrefsIn(BaseModel):
     enabled: bool
 
 
-def _exam_card(exam: dict[str, Any], services: Any, student_id: str) -> dict[str, Any]:
+def _exam_card(
+    exam: dict[str, Any],
+    services: Any,
+    student_id: str,
+    *,
+    student_state: dict[str, Any] | None = None,
+    question_count: int | None = None,
+) -> dict[str, Any]:
     state = services.exams.effective_state(exam)
-    student_state = services.attempts.student_state(exam, student_id)
+    if student_state is None:
+        student_state = services.attempts.student_state(exam, student_id)
+    if question_count is None:
+        question_count = services.exams.question_count(exam["id"])
     return {
         "id": exam["id"],
         "title": exam["title"],
@@ -53,7 +63,7 @@ def _exam_card(exam: dict[str, Any], services: Any, student_id: str) -> dict[str
         "state": state,
         "status": exam.get("status"),
         "access_mode": exam.get("access_mode"),
-        "question_count": services.exams.question_count(exam["id"]),
+        "question_count": question_count,
         "duration_minutes": exam.get("duration_minutes", 0),
         "max_attempts": exam.get("max_attempts", 1),
         "starts_at": exam.get("starts_at", ""),
@@ -64,10 +74,29 @@ def _exam_card(exam: dict[str, Any], services: Any, student_id: str) -> dict[str
     }
 
 
+def _exam_cards(
+    exams: list[dict[str, Any]], services: Any, student_id: str
+) -> list[dict[str, Any]]:
+    """Build every exam card with two batched reads instead of two per exam."""
+    exam_ids = [e["id"] for e in exams]
+    states = services.attempts.states_for_student(student_id, exams)
+    counts = services.exams.question_counts(exam_ids)
+    return [
+        _exam_card(
+            exam,
+            services,
+            student_id,
+            student_state=states.get(exam["id"]),
+            question_count=counts.get(exam["id"], 0),
+        )
+        for exam in exams
+    ]
+
+
 # --- Mini App page ---------------------------------------------------------
 
 @page_router.get("/app", response_class=HTMLResponse)
-async def student_mini_app(request: Request) -> Any:
+def student_mini_app(request: Request) -> Any:
     """Serve the Student Mini App shell (identity is resolved in-app via initData)."""
     templates = get_templates(request)
     return templates.TemplateResponse(
@@ -78,7 +107,7 @@ async def student_mini_app(request: Request) -> Any:
 # --- identity --------------------------------------------------------------
 
 @router.post("/auth")
-async def student_auth(request: Request, payload: InitDataIn) -> dict[str, Any]:
+def student_auth(request: Request, payload: InitDataIn) -> dict[str, Any]:
     """Exchange a verified ``initData`` for a student token + profile."""
     from app.api.student_deps import authenticate_init_data
 
@@ -102,7 +131,7 @@ async def student_auth(request: Request, payload: InitDataIn) -> dict[str, Any]:
 
 
 @router.get("/profile")
-async def student_profile(ctx: StudentContext = Depends(require_student)) -> dict[str, Any]:
+def student_profile(ctx: StudentContext = Depends(require_student)) -> dict[str, Any]:
     services = ctx.services
     return {
         "profile": services.students.view(ctx.student),
@@ -113,10 +142,10 @@ async def student_profile(ctx: StudentContext = Depends(require_student)) -> dic
 # --- dashboard / library ---------------------------------------------------
 
 @router.get("/dashboard")
-async def student_dashboard(ctx: StudentContext = Depends(require_student)) -> dict[str, Any]:
+def student_dashboard(ctx: StudentContext = Depends(require_student)) -> dict[str, Any]:
     services = ctx.services
     exams = services.exams.student_library()
-    cards = [_exam_card(e, services, ctx.id) for e in exams]
+    cards = _exam_cards(exams, services, ctx.id)
 
     completed = [c for c in cards if c["attempts_submitted"] > 0]
     scores = [c["best_percentage"] for c in completed if c["best_percentage"] is not None]
@@ -142,12 +171,12 @@ async def student_dashboard(ctx: StudentContext = Depends(require_student)) -> d
 
 
 @router.get("/exams")
-async def student_exams(
+def student_exams(
     request: Request, tab: str = "", category: str = "", search: str = "",
     ctx: StudentContext = Depends(require_student),
 ) -> dict[str, Any]:
     services = ctx.services
-    cards = [_exam_card(e, services, ctx.id) for e in services.exams.student_library()]
+    cards = _exam_cards(services.exams.student_library(), services, ctx.id)
 
     if category:
         cards = [c for c in cards if c["category"] == category]
@@ -176,7 +205,7 @@ async def student_exams(
 
 
 @router.get("/exams/{exam_id}")
-async def student_exam_detail(
+def student_exam_detail(
     exam_id: str, ctx: StudentContext = Depends(require_student)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -195,7 +224,7 @@ async def student_exam_detail(
 
 
 @router.get("/exams/{exam_id}/eligibility")
-async def student_exam_eligibility(
+def student_exam_eligibility(
     exam_id: str, ctx: StudentContext = Depends(require_student)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -238,7 +267,7 @@ def _attempt_summary(attempt: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/exams/{exam_id}/start")
-async def student_start_attempt(
+def student_start_attempt(
     exam_id: str, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -250,7 +279,7 @@ async def student_start_attempt(
 
 
 @router.get("/attempts")
-async def student_attempts(
+def student_attempts(
     exam_id: str = "", ctx: StudentContext = Depends(require_student)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -274,7 +303,7 @@ async def student_attempts(
 
 
 @router.get("/attempts/{attempt_id}")
-async def student_attempt(
+def student_attempt(
     attempt_id: str, ctx: StudentContext = Depends(require_student)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -322,7 +351,7 @@ def _attempt_payload(attempt: dict[str, Any], services: Any, student_id: str) ->
 
 
 @router.post("/attempts/{attempt_id}/answers")
-async def student_save_answer(
+def student_save_answer(
     attempt_id: str,
     payload: AnswerIn,
     ctx: StudentContext = Depends(require_student_write),
@@ -338,7 +367,7 @@ async def student_save_answer(
 
 
 @router.post("/attempts/{attempt_id}/pause")
-async def student_pause_attempt(
+def student_pause_attempt(
     attempt_id: str, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     """Freeze the countdown while the student is away from the session."""
@@ -351,7 +380,7 @@ async def student_pause_attempt(
 
 
 @router.post("/attempts/{attempt_id}/resume")
-async def student_resume_attempt(
+def student_resume_attempt(
     attempt_id: str, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     """Restart the countdown from the balance banked at pause time."""
@@ -364,7 +393,7 @@ async def student_resume_attempt(
 
 
 @router.post("/attempts/{attempt_id}/submit")
-async def student_submit_attempt(
+def student_submit_attempt(
     attempt_id: str, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -388,7 +417,7 @@ def _result_payload(attempt: dict[str, Any], exam: dict[str, Any]) -> dict[str, 
 
 
 @router.get("/attempts/{attempt_id}/review")
-async def student_review_attempt(
+def student_review_attempt(
     attempt_id: str, ctx: StudentContext = Depends(require_student)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -405,7 +434,7 @@ async def student_review_attempt(
 
 
 @router.get("/attempts/{attempt_id}/result")
-async def student_attempt_result(
+def student_attempt_result(
     attempt_id: str, ctx: StudentContext = Depends(require_student)
 ) -> dict[str, Any]:
     services = ctx.services
@@ -419,7 +448,7 @@ async def student_attempt_result(
 # --- notifications ---------------------------------------------------------
 
 @router.get("/notifications")
-async def student_notifications(
+def student_notifications(
     ctx: StudentContext = Depends(require_student),
 ) -> dict[str, Any]:
     services = ctx.services
@@ -431,7 +460,7 @@ async def student_notifications(
 
 
 @router.post("/notifications/{notification_id}/read")
-async def student_read_notification(
+def student_read_notification(
     notification_id: str, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     ctx.services.notifications.mark_read(ctx.id, notification_id)
@@ -439,7 +468,7 @@ async def student_read_notification(
 
 
 @router.post("/notifications/prefs")
-async def student_notification_prefs(
+def student_notification_prefs(
     payload: NotificationPrefsIn, ctx: StudentContext = Depends(require_student_write)
 ) -> dict[str, Any]:
     student = ctx.services.students.set_notifications(ctx.id, payload.enabled)

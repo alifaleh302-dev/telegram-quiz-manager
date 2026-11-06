@@ -81,7 +81,7 @@ app/
 ├── services/               # منطق العمل: questions, channels, schedules, publishing, analytics, settings, users, secret_store, userbot, backup, audit, students, exams, attempts, notifications
 ├── telegram/               # ناقلات النشر: عميل البوت (Bot API)، عميل userbot (MTProto)، الموجِّه (transport)، ومدير البوت (polling/webhook + Mini App)
 ├── scheduler/              # ScheduleRunner (منطق التشغيل) + SchedulerEngine (APScheduler + مهام الاختبارات)
-├── storage/                # SQLite (اتصال واحد + معاملات ذرّية) + التحقق من الصحة
+├── storage/                # طبقة التخزين: SQLite أو PostgreSQL (نفس العقد) + التحقق من الصحة
 ├── templates/              # واجهات Jinja2 (RTL عربية) + تطبيق الطالب student.html
 └── static/                 # CSS و JavaScript (لوحة الإدارة + تطبيق الطالب)
 
@@ -91,7 +91,7 @@ data/      # tqm.db (قاعدة بيانات SQLite واحدة: questions / chan
            #   student_exam_state / notifications / settings / users / secrets /
            #   audit_log) + backups/
 logs/      # app.log
-tests/     # 342 اختباراً
+tests/     # اختبارات شاملة (SQLite + PostgreSQL)
 tools/     # smoke_test.sh · telegram_check.py
 examples/  # questions.sample.json (نموذج استيراد)
 ```
@@ -100,6 +100,24 @@ examples/  # questions.sample.json (نموذج استيراد)
 بنسخة واحدة (`VACUUM INTO`). الطبقة معزولة داخل `storage/`، وواجهة القراءة/التعديل
 نفسها التي كانت للـ JSON، لذا لم تتغيّر الخدمات أو الواجهات. عند أول تشغيل تُستورد
 ملفات JSON القديمة من `data/` تلقائياً إلى قاعدة البيانات (مرة واحدة فقط).
+
+**قاعدة بيانات PostgreSQL (اختياري):** الطبقة نفسها تعمل أيضاً فوق PostgreSQL عبر
+`psycopg` ومُجمّع اتصالات. يكفي ضبط `DATABASE_URL` لاختيار الخلفية، دون أي تغيير في
+الخدمات أو الواجهات:
+
+```bash
+DATABASE_URL="postgresql://user:pass@host:5432/dbname"   # فارغ = SQLite المحلي
+```
+
+| | SQLite | PostgreSQL |
+|---|---|---|
+| الاختيار | `DATABASE_URL` فارغ | `DATABASE_URL` مضبوط |
+| القراءة | اتصال واحد متسلسل | مجمّع اتصالات + قراءات MVCC متوازية |
+| الكتابة | إعادة كتابة المجموعة كاملة | كتابة صفية (الصفوف المتغيّرة فقط) |
+| تعدد العمليات | عامل واحد | آمن لعدة عمليات/نسخ |
+
+النسخ الاحتياطي والاستعادة واعيان للخلفية: ملف `tqm.db` لـ SQLite، أو ملف JSON يحوي
+كل المجموعات لـ PostgreSQL — ونفس صيغة ZIP في كلا الحالتين، ويمكن الاستعادة بينهما.
 
 ---
 
@@ -382,7 +400,8 @@ examples/  # questions.sample.json (نموذج استيراد)
 ## 7. الاختبارات
 
 ```bash
-python -m pytest              # 342 اختباراً
+python -m pytest              # اختبارات SQLite
+TQM_TEST_DATABASE_URL="postgresql://user:pass@host:5432/db" python -m pytest  # اختبارات PostgreSQL
 bash tools/smoke_test.sh      # فحص شامل ضد خادم يعمل على المنفذ 12000
 python tools/telegram_check.py  # تشخيص اتصال البوت والقنوات
 ```
@@ -575,9 +594,15 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 
 > **مهم:** استخدم عاملاً واحداً (`--workers 1`). المجدول وحالة النشر تعمل داخل العملية،
 > وتشغيل عدة عمليات سيؤدي إلى نشر مكرر. للتوسّع أفقياً، افصل المجدول في خدمة مستقلة.
+> (قاعدة PostgreSQL تجعل القراءة/الكتابة آمنة عبر عدة عمليات، لكن التكرار في المجدول
+> يبقى سبباً لعدم تشغيل أكثر من عامل واحد للنشر.)
 
-> **تخزين دائم على المنصّات (Railway وغيرها):** قاعدة البيانات ملف واحد (`data/tqm.db`).
-> على منصّة بلا قرص دائم يُفقد الملف عند إعادة النشر. اربط **Volume** واجعل مسار البيانات
-> داخله، مثال: `APP_BASE_DIR=/data` (فتصبح القاعدة `/data/data/tqm.db`)، ثم اضبط
-> `SECRET_KEY` ثابتاً وإلا تعذّر فك تشفير التوكن المخزَّن. للترحيل: صدّر ZIP من
-> **الإعدادات ← نسخ احتياطي** ثم استورده بعد ربط القرص.
+> **تخزين دائم على المنصّات (Railway وغيرها):** خيارَان:
+> 1. **PostgreSQL** (موصى به): أضف خدمة Postgres واربط `DATABASE_URL` بها
+>    (على Railway: `${{Postgres.DATABASE_URL}}`). لا حاجة إلى قرص دائم، والبيانات
+>    تبقى عبر إعادة النشر.
+> 2. **SQLite + Volume**: اربط **Volume** واجعل مسار البيانات داخله، مثال
+>    `APP_BASE_DIR=/data` (فتصبح القاعدة `/data/data/tqm.db`).
+>
+> في الحالتين اضبط `SECRET_KEY` ثابتاً وإلا تعذّر فك تشفير التوكن المخزَّن. للترحيل بين
+> الخلفيتين: صدّر ZIP من **الإعدادات ← نسخ احتياطي** ثم استورده بعد تغيير `DATABASE_URL`.

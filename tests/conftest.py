@@ -5,6 +5,8 @@ Tests run against a temporary data directory so they never touch real data.
 
 from __future__ import annotations
 
+import itertools
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.config import Settings  # noqa: E402
 from app.services.container import Services, build_services  # noqa: E402
 from app.telegram.telegram_client import PublishResult  # noqa: E402
+
+
+# Set ``TQM_TEST_DATABASE_URL`` to run the whole suite against PostgreSQL. Each
+# test gets its own schema so parallel runs never share tables.
+TEST_DATABASE_URL = os.environ.get("TQM_TEST_DATABASE_URL", "").strip()
+_schema_counter = itertools.count(1)
+
+
+def database_overrides(tmp_path: Path) -> dict[str, object]:
+    """Storage settings for the backend under test."""
+    if not TEST_DATABASE_URL:
+        return {}
+    schema = f"tqm_test_{os.getpid()}_{next(_schema_counter)}"
+    return {"database_url": TEST_DATABASE_URL, "db_schema": schema}
 
 
 class FakeTelegramClient:
@@ -152,6 +168,7 @@ def settings(tmp_path: Path) -> Settings:
         admin_password="TestPassword123!",
         app_base_dir=str(tmp_path),
         telegram_bot_token="",
+        **database_overrides(tmp_path),
     )
     config.ensure_directories()
     return config
