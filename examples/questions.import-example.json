@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "questions": [
+    {
+      "question": "ما المنفذ الافتراضي لبروتوكول SSH؟",
+      "options": ["20", "21", "22", "23"],
+      "correct_option_id": 2,
+      "options_feedback": [
+        "غير صحيح؛ المنفذ 20 لنقل بيانات FTP.",
+        "غير صحيح؛ المنفذ 21 لأوامر FTP.",
+        "إجابة صحيحة! SSH يعمل افتراضياً على المنفذ 22.",
+        "غير صحيح؛ المنفذ 23 هو Telnet."
+      ],
+      "explanation": "SSH يستخدم المنفذ 22 افتراضياً.",
+      "category": "Networking",
+      "difficulty": "easy",
+      "status": "ready"
+    },
+    {
+      "question": "أي بنية بيانات تعمل بمبدأ LIFO؟",
+      "options": [
+        {"text": "المكدس (Stack)", "is_correct": true},
+        {"text": "الطابور (Queue)"},
+        {"text": "القائمة المترابطة"}
+      ],
+      "options_feedback": [
+        "إجابة صحيحة! المكدس يعمل بمبدأ آخر ما يدخل أول ما يخرج.",
+        "غير صحيح؛ الطابور يعمل بمبدأ FIFO.",
+        "غير صحيح؛ القائمة المترابطة لا تفرض ترتيب دخول/خروج."
+      ],
+      "explanation": "المكدس (Stack) يتبع LIFO.",
+      "category": "Data Structures",
+      "difficulty": "medium",
+      "status": "draft"
+    }
+  ]
+}

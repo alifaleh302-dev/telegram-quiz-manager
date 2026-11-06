@@ -93,7 +93,7 @@ data/      # tqm.db (قاعدة بيانات SQLite واحدة: questions / chan
 logs/      # app.log
 tests/     # اختبارات شاملة (SQLite + PostgreSQL)
 tools/     # smoke_test.sh · telegram_check.py
-examples/  # questions.sample.json (نموذج استيراد)
+examples/  # questions.sample.json · questions.import-example.json (نماذج استيراد)
 ```
 
 **لماذا SQLite؟** قاعدة بيانات ملف واحد، بلا خادم، مع معاملات ذرّية ونسخ احتياطي
@@ -511,6 +511,7 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
 | `question` | نعم | نص السؤال | 300 حرف كحد أقصى |
 | `options` | نعم | قائمة الخيارات | بين 2 و10، بلا تكرار |
 | `correct_option_id` | نعم | رقم الإجابة الصحيحة | يبدأ من **0** (أول خيار = 0) |
+| `options_feedback` | لا | تغذية راجعة لكل خيار (تظهر في نمط التمرين) | قائمة نصوص بطول الخيارات، كل عنصر 500 حرف |
 | `explanation` | لا | الشرح (التلميح) الذي يظهر بعد الإجابة | 500 حرف — وتيليجرام يقصّه إلى **200 حرف** |
 | `category` | لا | التصنيف | الافتراضي `General` |
 | `difficulty` | لا | الصعوبة | `easy` · `medium` · `hard` (الافتراضي `medium`) |
@@ -521,6 +522,11 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
 >
 > حقل **`explanation`** هو التلميح الذي يظهر للمشترك بعد إجابته. اجعله أقل من
 > 200 حرف لأن تيليجرام يرفض ما زاد عن ذلك.
+>
+> حقل **`options_feedback`** اختياري: قائمة نصوص **بعدد الخيارات نفسه**، العنصر رقم
+> `i` يشرح الخيار رقم `i`. إن كانت أقصر من الخيارات يُحشى الباقي بفراغ، وإن كانت
+> أطول يُقتطع. تظهر هذه التغذية للطالب أسفل كل خيار في **نمط التمرين** وفي شاشة
+> **مراجعة الإجابات**، ولا تظهر في الاختبار الرسمي أثناء الحل.
 
 ### الخيارات: صيغتان مقبولتان
 
@@ -545,18 +551,45 @@ python tools/telegram_check.py  # تشخيص اتصال البوت والقنو�
   "questions": [
     {
       "question": "ما المنفذ الافتراضي لبروتوكول SSH؟",
-      "options": ["21", "22", "23", "25"],
-      "correct_option_id": 1,
+      "options": ["20", "21", "22", "23"],
+      "correct_option_id": 2,
+      "options_feedback": [
+        "غير صحيح؛ المنفذ 20 لنقل بيانات FTP.",
+        "غير صحيح؛ المنفذ 21 لأوامر FTP.",
+        "إجابة صحيحة! SSH يعمل افتراضياً على المنفذ 22.",
+        "غير صحيح؛ المنفذ 23 هو Telnet."
+      ],
       "explanation": "SSH يعمل افتراضياً على المنفذ 22.",
       "category": "Networking",
       "difficulty": "easy",
       "status": "ready"
+    },
+    {
+      "question": "أي بنية بيانات تعمل بمبدأ LIFO؟",
+      "options": [
+        {"text": "المكدس (Stack)", "is_correct": true},
+        {"text": "الطابور (Queue)"},
+        {"text": "القائمة المترابطة"}
+      ],
+      "options_feedback": [
+        "إجابة صحيحة! المكدس يعمل بمبدأ آخر ما يدخل أول ما يخرج.",
+        "غير صحيح؛ الطابور يعمل بمبدأ FIFO.",
+        "غير صحيح؛ القائمة المترابطة لا تفرض ترتيب دخول/خروج."
+      ],
+      "explanation": "المكدس (Stack) يتبع LIFO.",
+      "category": "Data Structures",
+      "difficulty": "medium",
+      "status": "draft"
     }
   ]
 }
 ```
 
-يوجد ملف جاهز في `examples/questions.sample.json`.
+> في المثال الأول الخيارات نصوص مع `correct_option_id`، وفي الثاني كائنات مع
+> `is_correct` — وكلاهما مدعوم، ويمكن إضافة `options_feedback` مع أي من الصيغتين.
+
+يوجد ملفان جاهزان في `examples/`:
+`questions.sample.json` و`questions.import-example.json`.
 
 ### سياسة التكرار
 
