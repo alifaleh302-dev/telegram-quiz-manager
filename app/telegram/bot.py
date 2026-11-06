@@ -45,6 +45,12 @@ class BotManager:
         from app.core.config import get_settings
 
         config = get_settings()
+        if not config.telegram_bot_enabled:
+            logger.info(
+                "Bot listener disabled (TELEGRAM_BOT_ENABLED=false); "
+                "the dashboard and scheduler still run."
+            )
+            return
         token = self._current_token()
         if not token:
             logger.info("Telegram token not set; bot listener disabled (dry-run mode).")

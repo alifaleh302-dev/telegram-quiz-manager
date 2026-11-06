@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     telegram_mode: str = "polling"
     telegram_webhook_url: str = ""
     telegram_webhook_secret: str = ""
+    # Whether this process runs the bot listener (polling/webhook). Turn it OFF
+    # on any second instance that shares the same bot token: two pollers make
+    # Telegram return ``Conflict: terminated by other getUpdates request`` and
+    # the instances take turns answering /start with their own settings.
+    telegram_bot_enabled: bool = True
     # Public HTTPS URL of the Student Mini App (used for the bot's WebApp button
     # and deep links). Empty => derive from the request's own origin.
     mini_app_url: str = ""

@@ -242,12 +242,24 @@ class NotificationService:
         return created
 
     # --- delivery ----------------------------------------------------------
-    async def dispatch(self, *, limit: int = 50) -> dict[str, int]:
-        """Attempt to deliver pending notifications. Returns a small summary."""
+    async def dispatch(
+        self, *, limit: int = 50, exam_id: str | None = None
+    ) -> dict[str, int]:
+        """Attempt to deliver pending notifications. Returns a small summary.
+
+        ``exam_id`` restricts the sweep to one exam's notifications, so an
+        admin action can report exactly how many students it reached instead of
+        waiting for the next periodic sweep.
+        """
         if self._transport is None:
             return {"sent": 0, "failed": 0, "skipped": 0}
 
-        pending = [n for n in self._all() if n.get("status") == STATUS_PENDING][:limit]
+        pending = [
+            n
+            for n in self._all()
+            if n.get("status") == STATUS_PENDING
+            and (exam_id is None or n.get("exam_id") == exam_id)
+        ][:limit]
         sent = failed = skipped = 0
         for note in pending:
             student = self._students.get(note["student_id"])

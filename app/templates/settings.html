@@ -22,7 +22,12 @@
       <dl class="settings-list">
         <dt>وضع التشغيل</dt>
         <dd>
-          {% if env.dry_run %}
+          {% if not env.bot_listener_enabled %}
+            <span class="badge text-bg-secondary">مستمع البوت موقوف</span>
+            <span class="hint">
+              (TELEGRAM_BOT_ENABLED=false — هذه النسخة لا تستقبل /start ولا ترسل الرسائل التفاعلية)
+            </span>
+          {% elif env.dry_run %}
             <span class="badge text-bg-warning">تجريبي — لا يوجد توكن</span>
           {% else %}
             <span class="badge text-bg-success">متصل</span>
@@ -204,6 +209,14 @@
         خصّص النصوص التي يرسلها البوت. اترك الحقل فارغاً لاستخدام النص الافتراضي.
         يمكن استخدام المتغيّرات التالية داخل الرسالة وسيتم استبدالها تلقائياً.
       </p>
+      {% if not env.bot_listener_enabled %}
+      <div class="alert alert-warning py-2">
+        <i class="bi bi-exclamation-triangle"></i>
+        هذه النسخة <strong>لا تشغّل مستمع البوت</strong> (TELEGRAM_BOT_ENABLED=false)،
+        لذا لن تُرسَل هذه الرسائل من هنا. عدّل الرسائل في النسخة التي تشغّل البوت فعلاً
+        (الإنتاج) لتظهر للطلاب.
+      </div>
+      {% endif %}
       <div class="table-responsive mb-3">
         <table class="table table-sm align-middle mb-0">
           <thead><tr><th>المتغيّر</th><th>يُستبدل بـ</th></tr></thead>

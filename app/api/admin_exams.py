@@ -84,6 +84,24 @@ def _notify_if_live(services: Any, exam: dict[str, Any]) -> int:
     return services.notifications.notify_exam_published(exam)
 
 
+async def _notify_and_dispatch(services: Any, exam: dict[str, Any]) -> dict[str, int]:
+    """Enqueue the 'new exam' notice and deliver it immediately.
+
+    Enqueueing alone only queues rows for the scheduler's periodic sweep, so an
+    interactive action would report students as notified while they have not
+    received anything yet. Delivery is attempted right away; anything still
+    undelivered (rate-limited or an offline student) stays ``pending`` for the
+    retry sweep.
+    """
+    enqueued = _notify_if_live(services, exam)
+    if not enqueued:
+        return {"notified": 0, "enqueued": 0, "sent": 0, "failed": 0, "skipped": 0}
+    summary = await services.notifications.dispatch(exam_id=exam["id"])
+    # ``notified`` is kept for compatibility; ``sent`` is the number of messages
+    # Telegram actually accepted.
+    return {"notified": enqueued, "enqueued": enqueued, **summary}
+
+
 # --- exams -----------------------------------------------------------------
 
 @router.get("/exams")
@@ -128,7 +146,7 @@ def admin_get_exam(
 
 
 @router.put("/exams/{exam_id}")
-def admin_update_exam(
+async def admin_update_exam(
     request: Request,
     exam_id: str,
     payload: ExamIn,
@@ -145,19 +163,22 @@ def admin_update_exam(
     # Editing an exam into a live status (draft → published) must announce it,
     # exactly as the dedicated publish endpoint does; the (student, exam, type)
     # dedupe stops a re-save from sending it twice.
-    notified = 0
+    result = {"enqueued": 0, "sent": 0, "failed": 0, "skipped": 0}
     if not was_live:
-        notified = _notify_if_live(services, exam)
-    return {**_exam_view(exam, services), "notified": notified}
+        result = await _notify_and_dispatch(services, exam)
+    return {**_exam_view(exam, services), **result}
 
 
 @router.delete("/exams/{exam_id}")
 def admin_delete_exam(
-    request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
+    request: Request,
+    exam_id: str,
+    force: bool = False,
+    session: Any = Depends(require_permission("exams")),
 ) -> dict[str, Any]:
     services = get_services(request)
-    services.exams.delete(exam_id, actor=session.username)
-    return {"ok": True, "deleted": exam_id}
+    services.exams.delete(exam_id, force=force, actor=session.username)
+    return {"ok": True, "deleted": exam_id, "force": force}
 
 
 @router.post("/exams/{exam_id}/questions")
@@ -172,24 +193,25 @@ def admin_set_exam_questions(
 
 
 @router.post("/exams/{exam_id}/publish")
-def admin_publish_exam(
+async def admin_publish_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     services = get_services(request)
     exam = services.exams.publish(exam_id, actor=session.username)
     # Notify students only for a genuinely live exam (not a future window).
-    notified = _notify_if_live(services, exam)
-    return {"exam": _exam_view(exam, services), "notified": notified}
+    result = await _notify_and_dispatch(services, exam)
+    return {"exam": _exam_view(exam, services), **result}
 
 
 @router.post("/exams/{exam_id}/notify")
-def admin_notify_exam(
+async def admin_notify_exam(
     request: Request, exam_id: str, session: Any = Depends(require_permission("exams"))
 ) -> dict[str, Any]:
     """Manually (re)send the 'new exam' notice to every eligible student.
 
     Dedupe means a student already notified for this exam is skipped, so this is
-    safe to press again after adding new students.
+    safe to press again after adding new students. Delivery is attempted before
+    responding, so the count reflects messages actually sent.
     """
     services = get_services(request)
     exam = services.exams.get(exam_id)
@@ -197,8 +219,8 @@ def admin_notify_exam(
         raise ValidationError(f"الاختبار {exam_id} غير موجود.")
     if exam.get("status") not in ("published", "scheduled"):
         raise ValidationError("لا يمكن إشعار الطلاب قبل نشر الاختبار.")
-    notified = services.notifications.notify_exam_published(exam)
-    return {"ok": True, "notified": notified, "exam": _exam_view(exam, services)}
+    result = await _notify_and_dispatch(services, exam)
+    return {"ok": True, **result, "exam": _exam_view(exam, services)}
 
 
 @router.post("/exams/{exam_id}/close")

@@ -24,6 +24,9 @@
     <i class="bi bi-unlock"></i> إعادة فتح
   </button>
   {% endif %}
+  <button class="btn btn-sm btn-outline-danger" onclick="TQM.examDelete('{{ exam.id }}')">
+    <i class="bi bi-trash"></i> حذف
+  </button>
   <a class="btn btn-sm btn-outline-secondary" href="/exams">رجوع</a>
 </div>
 {% endblock %}

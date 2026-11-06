@@ -250,9 +250,13 @@ def exam_client(tmp_path: Path, monkeypatch):
 
     application = create_app()
     with TestClient(application) as client:
-        from tests.conftest import RecordingSleeper
+        from tests.conftest import FakeTelegramClient, RecordingSleeper
 
-        application.state.services.publishing._sleep = RecordingSleeper()
+        # Swap the network transport for the fake (as the ``services`` fixture
+        # does): notify/publish now deliver in-request, so the real client would
+        # otherwise hit the network with the dummy token.
+        application.state.services.telegram._bot = FakeTelegramClient()  # noqa: SLF001
+        application.state.services.publishing._sleep = RecordingSleeper()  # noqa: SLF001
         yield client
     get_settings.cache_clear()
 
@@ -797,6 +801,33 @@ def test_delete_exam_with_attempts_is_blocked(svc) -> None:
         svc.exams.delete(exam["id"])
 
 
+def test_force_delete_exam_cascades_attempts_and_notifications(svc) -> None:
+    q = _ready(svc)
+    exam = svc.exams.create({"title": "حذف قسري", "access_mode": "always"}, [q["id"]])
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(25))
+    attempt = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.submit(attempt["id"], student["id"])
+    svc.notifications.enqueue(
+        student_id=student["id"], exam_id=exam["id"], type="exam_published", title="t", body="b"
+    )
+
+    svc.exams.delete(exam["id"], force=True)
+
+    assert svc.exams.get(exam["id"]) is None
+    assert svc.attempts.attempts_for_exam(exam["id"]) == []
+    assert svc.attempts.answers_for(attempt["id"]) == []
+    assert svc.notifications.for_student(student["id"]) == []
+    assert svc.exams.questions_for(exam["id"]) == []
+    # The question bank itself is untouched.
+    assert svc.questions.get(q["id"]) is not None
+
+
+def test_force_delete_unknown_exam_is_rejected(svc) -> None:
+    with pytest.raises(ValidationError):
+        svc.exams.delete("EX999", force=True)
+
+
 def test_admin_pages_render(exam_client) -> None:
     _login(exam_client)
     for path in ("/exams", "/exams/new", "/students", "/attempts", "/exam-analytics"):
@@ -1204,7 +1235,50 @@ def test_manual_notify_endpoint(exam_client) -> None:
         f"/api/admin/exams/{exam_id}/notify", headers={"X-CSRF-Token": csrf}
     )
     assert response.status_code == 200, response.text
-    assert response.json()["notified"] >= 1
+    body = response.json()
+    assert body["notified"] >= 1
+    # Delivery is attempted before the response, so the count is what was sent.
+    assert body["sent"] >= 1
+
+
+def test_notify_endpoint_dispatches_immediately(exam_client) -> None:
+    """The notify button must actually deliver, not just enqueue."""
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1)
+    exam_client.post(
+        "/api/student/auth",
+        json={"init_data": build_init_data({**STUDENT_USER, "id": 991991}, BOT_TOKEN)},
+    )
+    response = exam_client.post(
+        f"/api/admin/exams/{exam_id}/notify", headers={"X-CSRF-Token": csrf}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["sent"] >= 1
+    assert body["failed"] == 0
+
+
+def test_force_delete_endpoint_cascades(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1)
+    init_data = build_init_data({**STUDENT_USER, "id": 771771}, BOT_TOKEN)
+    started = exam_client.post(
+        f"/api/student/exams/{exam_id}/start",
+        headers={"X-Telegram-Init-Data": init_data},
+    )
+    assert started.status_code == 200, started.text
+    # A plain delete is refused while attempts exist …
+    blocked = exam_client.delete(
+        f"/api/admin/exams/{exam_id}", headers={"X-CSRF-Token": csrf}
+    )
+    assert blocked.status_code == 400
+    # … but an explicit force delete cascades.
+    forced = exam_client.delete(
+        f"/api/admin/exams/{exam_id}?force=true", headers={"X-CSRF-Token": csrf}
+    )
+    assert forced.status_code == 200, forced.text
+    assert forced.json()["deleted"] == exam_id
+    assert exam_client.get(f"/api/admin/exams/{exam_id}").status_code in (400, 404)
 
 
 def test_manual_notify_rejects_draft(exam_client) -> None:

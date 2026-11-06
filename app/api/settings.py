@@ -129,6 +129,7 @@ async def settings_page(request: Request, session=Depends(require_page_session))
             "default_transport": services.telegram.default_mode,
             "env": {
                 "telegram_mode": services.settings.telegram_mode,
+                "bot_listener_enabled": services.settings.telegram_bot_enabled,
                 "dry_run": services.dry_run,
                 "data_dir": str(services.settings.data_dir),
                 "secret_key_set": bool(services.settings.secret_key),

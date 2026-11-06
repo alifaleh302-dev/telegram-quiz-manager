@@ -85,11 +85,9 @@
                   <i class="bi bi-unlock"></i>
                 </button>
                 {% endif %}
-                {% if exam.stats.attempts == 0 %}
-                <button class="btn btn-outline-danger" onclick="TQM.examAction('{{ exam.id }}','delete')" title="حذف">
+                <button class="btn btn-outline-danger" onclick="TQM.examDelete('{{ exam.id }}')" title="حذف">
                   <i class="bi bi-trash"></i>
                 </button>
-                {% endif %}
               </div>
             </td>
           </tr>

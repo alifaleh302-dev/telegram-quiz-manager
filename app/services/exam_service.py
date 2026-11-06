@@ -163,10 +163,21 @@ class ExamService:
         )
         return self.get(exam_id)  # type: ignore[return-value]
 
-    def delete(self, exam_id: str, *, actor: str = "system") -> None:
-        if self.attempts_for(exam_id):
+    def delete(self, exam_id: str, *, force: bool = False, actor: str = "system") -> None:
+        """Remove an exam and its dependent rows.
+
+        Without ``force`` an exam that already has attempts is refused — the
+        safe default, because deleting it would erase student results. With
+        ``force`` the whole exam is cascaded: attempts, their answers, the
+        per-student state, the notifications it produced and its question
+        snapshots, so nothing is left dangling.
+        """
+        if self.get(exam_id) is None:
+            raise ValidationError(f"الاختبار {exam_id} غير موجود.")
+        attempts = self.attempts_for(exam_id)
+        if attempts and not force:
             raise ValidationError(
-                "لا يمكن حذف اختبار له محاولات. أرشِفه بدلاً من ذلك."
+                "لا يمكن حذف اختبار له محاولات. أرشِفه بدلاً من ذلك، أو استخدم الحذف القسري."
             )
 
         def _mutate(document: dict[str, Any]) -> None:
@@ -183,8 +194,41 @@ class ExamService:
         self._mutate_exam_questions(
             lambda rows: [r for r in rows if r["exam_id"] != exam_id]
         )
+        self._storage.notifications.update(
+            lambda document: document.update(
+                notifications=[
+                    n for n in document["notifications"] if n.get("exam_id") != exam_id
+                ]
+            )
+        )
+        self._storage.student_exam_state.update(
+            lambda document: document.update(
+                states=[s for s in document["states"] if s.get("exam_id") != exam_id]
+            )
+        )
+        if attempts:
+            attempt_ids = {a["id"] for a in attempts}
+            self._storage.attempt_answers.update(
+                lambda document: document.update(
+                    attempt_answers=[
+                        r
+                        for r in document["attempt_answers"]
+                        if r.get("attempt_id") not in attempt_ids
+                    ]
+                )
+            )
+            self._storage.attempts.update(
+                lambda document: document.update(
+                    attempts=[a for a in document["attempts"] if a.get("exam_id") != exam_id]
+                )
+            )
         self._audit.record(
-            "exam.deleted", actor=actor, level="warning", message=f"حذف الاختبار {exam_id}"
+            "exam.deleted",
+            actor=actor,
+            level="warning",
+            message=f"حذف الاختبار {exam_id}",
+            exam_id=exam_id,
+            attempts_removed=len(attempts),
         )
 
     # --- exam questions (versioned snapshots) ------------------------------

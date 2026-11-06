@@ -1531,22 +1531,51 @@ const TQM = (() => {
   }
 
   async function examAction(examId, action) {
-    if (action === 'delete' && !confirm(`حذف الاختبار ${examId}؟ لا يمكن التراجع.`)) return;
+    if (action === 'delete') return examDelete(examId);
     const labels = {
       publish: 'نشر الاختبار', notify: 'إشعار الطلاب', close: 'إغلاق الاختبار',
-      reopen: 'إعادة فتح الاختبار', archive: 'أرشفة الاختبار', delete: 'حذف الاختبار',
+      reopen: 'إعادة فتح الاختبار', archive: 'أرشفة الاختبار',
     };
-    const result = await api(`/api/admin/exams/${examId}/${action}`, { method: action === 'delete' ? 'DELETE' : 'POST' });
+    const result = await api(`/api/admin/exams/${examId}/${action}`, { method: 'POST' });
     if (result.ok) {
-      const notified = result.data?.notified;
-      const suffix = typeof notified === 'number' && (action === 'publish' || action === 'notify')
-        ? ` — تم إشعار ${notified} طالباً`
-        : '';
+      const data = result.data || {};
+      let suffix = '';
+      if (action === 'publish' || action === 'notify') {
+        const enqueued = data.enqueued ?? data.notified ?? 0;
+        const sent = data.sent || 0;
+        const failed = data.failed || 0;
+        suffix = enqueued
+          ? ` — تم إرسال ${sent} من ${enqueued}`
+          : ' — لا يوجد طلاب جدد لإشعارهم';
+        if (failed) suffix += ` (تعذّر ${failed})`;
+      }
       toast(`${labels[action] || action}: تم بنجاح${suffix}`);
-      setTimeout(() => window.location.reload(), 700);
+      setTimeout(() => window.location.reload(), 900);
     } else {
       toast(result.error, 'error');
     }
+  }
+
+  async function examDelete(examId, force = false) {
+    const warning = force
+      ? `حذف الاختبار ${examId} مع كل محاولات ونتائج الطلاب؟ لا يمكن التراجع.`
+      : `حذف الاختبار ${examId}؟ لا يمكن التراجع.`;
+    if (!confirm(warning)) return;
+    const url = `/api/admin/exams/${examId}${force ? '?force=true' : ''}`;
+    const result = await api(url, { method: 'DELETE' });
+    if (result.ok) {
+      toast('حذف الاختبار: تم بنجاح');
+      setTimeout(() => { window.location.href = '/exams'; }, 700);
+      return;
+    }
+    // An exam with attempts is refused without force; offer the cascade explicitly.
+    if (!force && /محاولات/.test(result.error || '')) {
+      if (confirm(`${result.error}\n\nحذف الاختبار وكل محاولات الطلاب نهائياً؟`)) {
+        await examDelete(examId, true);
+      }
+      return;
+    }
+    toast(result.error, 'error');
   }
 
   function initExamForm() {
@@ -1653,6 +1682,6 @@ const TQM = (() => {
     initUsersPage, showUserForm, editUser, deleteUser, resetUserPassword,
     userbotForm, showUserbotForm, hideUserbotForm, toggleUserbot, setDefaultUserbot,
     deleteUserbot, userbotLoginBox, testUserbot,
-    examAction, initExamForm, initExamAnalytics, selectAllVisible, clearExamQuestions,
+    examAction, examDelete, initExamForm, initExamAnalytics, selectAllVisible, clearExamQuestions,
   };
 })();
