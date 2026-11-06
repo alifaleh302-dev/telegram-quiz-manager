@@ -1575,8 +1575,13 @@ def test_practice_answer_returns_immediate_feedback(exam_client) -> None:
     assert started.status_code == 200, started.text
     payload = started.json()
     assert payload["exam"]["mode"] == "practice"
-    # Nothing is revealed before the student answers, even in practice mode.
-    assert "correct_option_id" not in payload["questions"][0]
+    # Practice mode is study-only: the session carries the answer key so the
+    # client can grade a tap on the same frame, without a round-trip.
+    assert payload["questions"][0]["correct_option_id"] == 1
+    assert payload["questions"][0]["options_feedback"] == PRACTICE_FEEDBACK
+    # The pick itself is still nothing until the student answers.
+    assert payload["questions"][0]["selected_option"] is None
+    assert "is_correct" not in payload["questions"][0]
 
     attempt_id = payload["attempt"]["id"]
     qid = payload["questions"][0]["question_id"]
@@ -1673,6 +1678,54 @@ def test_review_exposes_feedback_display(exam_client) -> None:
         f"/api/student/attempts/{attempt_id}/review", headers=headers
     ).json()
     assert review["exam"]["feedback_display"] == "all"
+
+
+def test_practice_session_ships_answer_key_but_timed_does_not(exam_client) -> None:
+    """Instant practice feedback needs the key client-side; timed must stay sealed."""
+    csrf = _login(exam_client)
+    headers = _student_headers()
+
+    practice_id = _make_practice_exam(exam_client, csrf, mode="practice")
+    practice = exam_client.post(
+        f"/api/student/exams/{practice_id}/start", headers=headers
+    ).json()
+    pq = practice["questions"][0]
+    assert pq["correct_option_id"] == 1
+    assert pq["options_feedback"] == PRACTICE_FEEDBACK
+
+    timed_id = _make_practice_exam(exam_client, csrf, mode="timed")
+    timed = exam_client.post(
+        f"/api/student/exams/{timed_id}/start", headers=headers
+    ).json()
+    tq = timed["questions"][0]
+    assert "correct_option_id" not in tq
+    assert "options_feedback" not in tq
+    assert "explanation" not in tq
+
+
+def test_resumed_practice_session_keeps_feedback(exam_client) -> None:
+    """Reopening a practice attempt re-reveals the questions already answered."""
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="practice")
+    headers = _student_headers()
+
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    payload = started.json()
+    attempt_id = payload["attempt"]["id"]
+    qid = payload["questions"][0]["question_id"]
+    exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 0},
+        headers=headers,
+    )
+
+    resumed = exam_client.post(
+        f"/api/student/exams/{exam_id}/start", headers=headers
+    ).json()
+    rq = resumed["questions"][0]
+    assert rq["selected_option"] == 0
+    assert rq["is_correct"] is False
+    assert rq["correct_option_id"] == 1
 
 
 def test_timed_answer_never_leaks_feedback(exam_client) -> None:

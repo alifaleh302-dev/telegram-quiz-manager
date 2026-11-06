@@ -60,10 +60,15 @@ const SA = (() => {
     box.hidden = false;
     setTimeout(() => { box.hidden = true; }, 4000);
   }
-  function setHeader(title, subtitle, showBack) {
+  function setHeader(title, subtitle, showBack, counter) {
     document.getElementById('saTitle').textContent = title;
     document.getElementById('saSubtitle').textContent = subtitle || '';
     document.getElementById('saBack').hidden = !showBack;
+    // The progress pill lives in the header and is only shown while answering.
+    const counterEl = document.getElementById('saCounter');
+    counterEl.hidden = !counter;
+    if (counter) counterEl.textContent = counter;
+    document.getElementById('saTimer').hidden = !counter;
   }
   const view = () => document.getElementById('saView');
   function render(node) {
@@ -345,9 +350,10 @@ const SA = (() => {
     // the student picked (plus the correct one). Defaults to the focused view.
     const feedbackDisplay = (data.exam && data.exam.feedback_display) || 'picked';
     const answers = {};
-    // Practice mode reveals each answer as it is picked; the per-question
-    // feedback is cached here (from the answer call, or from the payload for a
-    // resumed session) so repainting a question keeps its colouring.
+    // Practice mode reveals each answer as it is picked. In practice the session
+    // payload already carries the answer key, so the colour and feedback render
+    // on the same frame as the tap; the POST that persists the pick runs behind
+    // it and never gates the reveal.
     const feedback = {};
     // Questions with an answer request in flight: their options are frozen so a
     // second tap cannot race the first.
@@ -360,20 +366,13 @@ const SA = (() => {
         answers[q.question_id] = q.selected_option;
         index = i;
       }
-      if (isPractice && typeof q.is_correct === 'boolean') {
+      if (isPractice && q.correct_option_id !== undefined) {
         feedback[q.question_id] = q;
       }
     });
 
     const wrap = el('<div class="sa-session"></div>');
-    const top = el(`<div class="sa-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span class="sa-note" id="saCounter"></span>
-        <span class="sa-timer" id="saTimer"></span>
-      </div>
-      <div class="sa-progress"><div id="saBar" style="width:0%"></div></div>
-      <p class="sa-note" id="saResumeNote" hidden></p>
-    </div>`);
+    const resumeNote = el('<p class="sa-note" id="saResumeNote" hidden></p>');
     const body = el('<div class="sa-card"></div>');
     const hint = el(`<p class="sa-nav-hint"><i class="bi bi-hand-index-thumb"></i>
       للتنقل بين الأسئلة اسحب يميناً أو يساراً، أو اضغط على أي مساحة فارغة ثم السهم.</p>`);
@@ -386,15 +385,13 @@ const SA = (() => {
       <button class="sa-side-arrow sa-side-arrow-prev" id="saArrowPrev" aria-label="السؤال السابق"><i class="bi bi-chevron-right"></i></button>
       <button class="sa-side-arrow sa-side-arrow-next" id="saArrowNext" aria-label="السؤال التالي"><i class="bi bi-chevron-left"></i></button>
     </div>`);
-    wrap.append(top, body, hint, submitBar, sideNav);
-    setHeader(data.exam.title, 'قيد التنفيذ', false);
+    wrap.append(resumeNote, body, hint, submitBar, sideNav);
+    setHeader(data.exam.title, 'قيد التنفيذ', false, `${index + 1}/${questions.length}`);
     render(wrap);
 
     const timerEl = document.getElementById('saTimer');
     const counterEl = document.getElementById('saCounter');
-    const barEl = document.getElementById('saBar');
     const sideNavEl = document.getElementById('saSideNav');
-    const resumeNote = document.getElementById('saResumeNote');
     const answeredCount = Object.keys(answers).length;
     if (answeredCount > 0 && index > 0) {
       resumeNote.textContent = `تم استئناف جلستك من السؤال ${index + 1} (آخر سؤال أجبت عنه).`;
@@ -403,8 +400,7 @@ const SA = (() => {
 
     function paint() {
       const q = questions[index];
-      counterEl.textContent = `السؤال ${index + 1} من ${questions.length}`;
-      barEl.style.width = `${Math.round(((index + 1) / questions.length) * 100)}%`;
+      counterEl.textContent = `${index + 1}/${questions.length}`;
       body.innerHTML = `<div class="sa-question-text">${esc(q.question)}</div>`;
       const revealed = isPractice ? feedback[q.question_id] : null;
       const frozen = revealed || pending.has(q.question_id);
@@ -466,8 +462,18 @@ const SA = (() => {
     // and the pick is locked (no second guess, so the feedback stays honest).
     function chooseOption(q, optIndex) {
       if (pending.has(q.question_id)) return;
-      pending.add(q.question_id);
       answers[q.question_id] = optIndex;
+      // Reveal immediately from the local answer key (practice only), so the
+      // colour/feedback never wait on the network; the POST just persists it.
+      if (isPractice && feedback[q.question_id]) {
+        paint();
+        api(`/api/student/attempts/${data.attempt.id}/answers`, {
+          method: 'POST', write: true,
+          body: { question_id: q.question_id, selected_option: optIndex },
+        }).catch((error) => alertMsg(error.message));
+        return;
+      }
+      pending.add(q.question_id);
       paint();
       api(`/api/student/attempts/${data.attempt.id}/answers`, {
         method: 'POST', write: true,
@@ -706,17 +712,20 @@ const SA = (() => {
     paint();
 
     if (isPractice) {
-      // Practice is untimed by design; there is nothing to count down.
+      // Practice is untimed by design; the header shows only the question count.
       timerEl.hidden = true;
     } else if (!hasTimer) {
       timerEl.textContent = '∞';
+      timerEl.hidden = false;
     } else if (data.attempt.paused) {
       // Reopened a session that was paused when the student last left: the
       // server holds the balance, so resume it now that they are back.
       paused = true;
+      timerEl.hidden = false;
       paintTimer();
       resumeTimer();
     } else {
+      timerEl.hidden = false;
       startTicker();
     }
     startActivity();

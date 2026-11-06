@@ -225,14 +225,17 @@ body.student-app {
 .sa-tabs button.active i { transform: translateY(-1px); }
 
 /* Session */
-.sa-progress { height: 7px; border-radius: 4px; background: var(--sa-surface-2); overflow: hidden; }
-.sa-progress > div {
-  height: 100%;
-  background: linear-gradient(90deg, var(--sa-brand), var(--sa-brand-2));
-  transition: width 0.25s;
+.sa-header-pill {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
-.sa-timer { font-variant-numeric: tabular-nums; font-weight: 800; color: var(--sa-brand); }
-.sa-timer.warning { color: var(--sa-danger); }
+.sa-header-pill#saTimer.warning { background: var(--sa-danger); }
 
 .sa-question-text { font-size: 1.05rem; font-weight: 800; line-height: 1.7; }
 

@@ -348,14 +348,17 @@ def _attempt_payload(attempt: dict[str, Any], services: Any, student_id: str) ->
             "options": list(row.get("options_snapshot") or []),
             "selected_option": saved.get(row["question_id"]),
         }
-        # A resumed practice session must keep showing the feedback for the
-        # questions already answered, otherwise the colours would vanish.
-        if practice and item["selected_option"] is not None:
+        # Practice mode is study-only, so the client gets the answer key up front
+        # and grades each pick locally: the colour and feedback appear on the same
+        # frame instead of after the round-trip. A timed exam never receives this,
+        # so its answers stay sealed until submit.
+        if practice:
             correct = int(row["correct_answer_snapshot"])
-            item["is_correct"] = item["selected_option"] == correct
             item["correct_option_id"] = correct
             item["options_feedback"] = list(row.get("options_feedback_snapshot") or [])
             item["explanation"] = row.get("explanation_snapshot", "")
+            if item["selected_option"] is not None:
+                item["is_correct"] = item["selected_option"] == correct
         return item
 
     return {
