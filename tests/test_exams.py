@@ -717,6 +717,27 @@ def test_paused_time_excluded_from_duration(svc) -> None:
     assert done["duration_seconds"] < 60
 
 
+def test_paused_attempt_settled_when_exam_closes(svc) -> None:
+    """An abandoned paused attempt must not linger once its exam is closed."""
+    q = _ready(svc)
+    exam = svc.exams.create(
+        {"title": "إغلاق", "access_mode": "always", "duration_minutes": 10}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(34))
+    attempt = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.pause(attempt["id"], student["id"])
+
+    # While the exam is live, the paused attempt is left alone by the sweep.
+    assert svc.attempts.sweep_expired() == 0
+    assert svc.attempts.get(attempt["id"])["status"] == "in_progress"
+
+    # Closing the exam ends it: nothing can be resumed, so the sweep settles it.
+    svc.exams.close(exam["id"])
+    assert svc.attempts.sweep_expired() == 1
+    assert svc.attempts.get(attempt["id"])["status"] == "expired"
+
+
 def test_admin_reset_attempts_clears_history(svc) -> None:
     q = _ready(svc)
     exam = svc.exams.create(

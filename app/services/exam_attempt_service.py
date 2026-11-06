@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.services.audit_service import AuditService
-from app.services.exam_service import ExamService
+from app.services.exam_service import ExamService, STATE_ARCHIVED, STATE_CLOSED
 from app.storage.sqlite_manager import Storage, utc_now_iso
 from app.storage.validators import ValidationError
 
@@ -508,21 +508,31 @@ class ExamAttemptService:
     def sweep_expired(self) -> int:
         """Auto-submit every attempt whose server-side window has passed.
 
-        Paused attempts are skipped: their countdown is frozen, so an elapsed
-        wall-clock deadline must not close a session the student has not
-        resumed (the balance is re-based on resume).
+        A paused attempt is normally left alone: its countdown is frozen, so an
+        elapsed wall-clock deadline must not close a session the student has not
+        resumed (the balance is re-based on resume). The exception is an exam
+        that has itself closed or been archived — nothing can be resumed inside
+        a closed exam, so an abandoned paused attempt is settled here rather
+        than lingering as "in progress" forever.
         """
         closed = 0
         for attempt in self._all():
             if attempt.get("status") != STATUS_IN_PROGRESS:
                 continue
-            if attempt.get("paused_at"):
+            if attempt.get("paused_at") and not self._exam_is_over(attempt.get("exam_id")):
                 continue
             expires = _parse_instant(attempt.get("expires_at"))
-            if expires and _now() > expires:
+            if attempt.get("paused_at") or (expires and _now() > expires):
                 self._finalize(attempt["id"], status=STATUS_EXPIRED)
                 closed += 1
         return closed
+
+    def _exam_is_over(self, exam_id: str | None) -> bool:
+        """True when the parent exam is closed/archived (no resuming possible)."""
+        exam = self._exams.get(exam_id) if exam_id else None
+        if exam is None:
+            return False
+        return self._exams.effective_state(exam) in (STATE_CLOSED, STATE_ARCHIVED)
 
     # --- reading results ---------------------------------------------------
     def exam_analytics(self, exam_id: str) -> dict[str, Any]:
