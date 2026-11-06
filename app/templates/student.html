@@ -5,6 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>اختباراتي</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    /* Pick the starting theme before first paint: an explicit student choice
+       wins, otherwise follow the Telegram colour scheme, otherwise dark. The
+       palette itself is the app's own (see student.css), not Telegram's. */
+    (function () {
+      try {
+        var saved = localStorage.getItem('sa-theme');
+        var scheme = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.colorScheme;
+        var mode = saved || (scheme === 'light' ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', mode);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <link href="/static/css/student.css" rel="stylesheet">
@@ -34,7 +49,7 @@
     <button data-tab="home" class="active"><i class="bi bi-house-door"></i><span>الرئيسية</span></button>
     <button data-tab="exams"><i class="bi bi-journal-check"></i><span>الاختبارات</span></button>
     <button data-tab="results"><i class="bi bi-trophy"></i><span>نتائجي</span></button>
-    <button data-tab="profile"><i class="bi bi-person-circle"></i><span>حسابي</span></button>
+    <button data-tab="settings"><i class="bi bi-gear"></i><span>الإعدادات</span></button>
   </nav>
 
   <div class="sa-modal" id="saModal" hidden>

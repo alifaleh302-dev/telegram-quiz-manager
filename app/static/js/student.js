@@ -108,9 +108,25 @@ const SA = (() => {
     }
   }
 
+  const THEME_KEY = 'sa-theme';
+  function themeMode() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+  function setTheme(mode, persist) {
+    const next = mode === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    if (persist) {
+      try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
+    }
+  }
+  // The inline <head> script sets the initial theme. Here we only follow the
+  // Telegram client's colour scheme while the student has made no explicit
+  // choice; an explicit choice is remembered across sessions.
   function applyTheme() {
-    if (!tg?.themeParams) return;
-    document.documentElement.setAttribute('data-theme', tg.colorScheme || 'dark');
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch { /* ignore */ }
+    if (saved === 'light' || saved === 'dark') return;
+    setTheme(tg?.colorScheme === 'light' ? 'light' : 'dark', false);
   }
 
   async function refreshBadge() {
@@ -130,7 +146,7 @@ const SA = (() => {
     document.getElementById('saBack').hidden = true;
     const loaders = {
       home: loadHome, exams: loadExams, results: loadResults,
-      notifications: loadNotifications, profile: loadProfile,
+      notifications: loadNotifications, settings: loadSettings,
     };
     render(loading());
     try {
@@ -727,33 +743,172 @@ const SA = (() => {
     render(wrap);
   }
 
-  async function loadProfile() {
-    const data = await api('/api/student/profile');
-    const p = data.profile;
-    const wrap = el('<div></div>');
-    wrap.appendChild(el(`<div class="sa-card" style="text-align:center">
-      ${p.photo_url ? `<img src="${esc(p.photo_url)}" alt="" style="width:72px;height:72px;border-radius:50%">` : '<i class="bi bi-person-circle" style="font-size:3rem"></i>'}
-      <h3 style="margin-top:8px">${esc(p.name)}</h3>
-      <p class="sa-note">${p.username ? '@' + esc(p.username) : ''}</p></div>`));
+  // --- settings ------------------------------------------------------------
+  // Rows reuse the .sa-row list pattern; the account card shows the identity
+  // Telegram gave us, and everything else (theme, notifications, policy, about)
+  // is reachable from here without leaving the Mini App.
+  function settingsRow({ icon, title, subtitle, end, onClick, control }) {
+    // A <div> (not <button>) so a switch control can live inside without
+    // nesting interactive elements.
+    const node = el(`<div class="sa-row" role="${onClick ? 'button' : 'group'}"${onClick ? ' tabindex="0"' : ''}>
+      <span class="sa-row-icon"><i class="bi ${icon}"></i></span>
+      <span class="sa-row-body">${esc(title)}${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</span>
+      <span class="sa-row-end"></span>
+    </div>`);
+    const endEl = node.querySelector('.sa-row-end');
+    if (control) endEl.appendChild(control);
+    else endEl.innerHTML = end || '<i class="bi bi-chevron-left"></i>';
+    if (onClick) {
+      node.addEventListener('click', (event) => {
+        // Ignore clicks that originate inside an embedded control.
+        if (event.target.closest('.sa-switch, .sa-seg, input, button')) return;
+        onClick();
+      });
+      node.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(); }
+      });
+    } else {
+      node.style.cursor = 'default';
+    }
+    return node;
+  }
 
-    const toggle = el(`<div class="sa-card">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span>تفعيل التنبيهات</span>
-        <input type="checkbox" id="saNotifToggle" ${p.notifications_enabled ? 'checked' : ''} style="width:20px;height:20px">
-      </div></div>`);
-    toggle.querySelector('input').addEventListener('change', async (event) => {
-      try {
-        await api('/api/student/notifications/prefs', {
-          method: 'POST', write: true, body: { enabled: event.target.checked },
-        });
-      } catch (error) { alertMsg(error.message); }
-    });
-    wrap.appendChild(toggle);
-    wrap.appendChild(el(`<div class="sa-card"><div class="sa-meta">
-      <span><i class="bi bi-calendar"></i> انضممت ${esc(p.created_at)}</span>
-    </div></div>`));
-    setHeader('حسابي', '', false);
+  function toggleSwitch(checked, onChange) {
+    const wrap = el(`<span class="sa-switch">
+      <input type="checkbox" ${checked ? 'checked' : ''} aria-label="تبديل">
+      <span class="track"></span><span class="thumb"></span></span>`);
+    wrap.querySelector('input').addEventListener('change', (event) => onChange(event.target.checked));
+    return wrap;
+  }
+
+  function themeSegment() {
+    const seg = el(`<div class="sa-seg">
+      <button data-mode="light"><i class="bi bi-sun"></i> نهاري</button>
+      <button data-mode="dark"><i class="bi bi-moon-stars"></i> ليلي</button>
+      <button data-mode="system"><i class="bi bi-circle-half"></i> تلقائي</button>
+    </div>`);
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch { /* ignore */ }
+    let current = saved === 'light' || saved === 'dark' ? saved : 'system';
+    const paint = () => seg.querySelectorAll('button').forEach((b) =>
+      b.classList.toggle('active', b.dataset.mode === current));
+    seg.querySelectorAll('button').forEach((button) =>
+      button.addEventListener('click', () => {
+        const mode = button.dataset.mode;
+        if (mode === 'system') {
+          try { localStorage.removeItem(THEME_KEY); } catch { /* ignore */ }
+          setTheme(tg?.colorScheme === 'light' ? 'light' : 'dark', false);
+        } else {
+          setTheme(mode, true);
+        }
+        current = mode;
+        paint();
+      }));
+    paint();
+    return seg;
+  }
+
+  async function loadSettings() {
+    const data = await api('/api/student/profile');
+    const p = data.profile || {};
+    const wrap = el('<div></div>');
+
+    const initial = (p.name || '؟').trim().charAt(0);
+    wrap.appendChild(el(`<div class="sa-card sa-hero">
+      ${p.photo_url
+        ? `<img class="sa-avatar" src="${esc(p.photo_url)}" alt="">`
+        : `<span class="sa-avatar">${esc(initial)}</span>`}
+      <div class="sa-hero-text">
+        <h3>${esc(p.name || 'طالب')}</h3>
+        <p>${p.username ? '@' + esc(p.username) : 'حساب تيليجرام'}</p>
+      </div>
+      <i class="bi bi-patch-check-fill" style="color:var(--sa-brand);font-size:1.3rem"></i>
+    </div>`));
+
+    wrap.appendChild(sectionTitle('التفضيلات'));
+    const prefs = el('<div class="sa-list"></div>');
+    prefs.appendChild(settingsRow({
+      icon: 'bi-bell', title: 'تفعيل الإشعارات',
+      subtitle: 'استلام تنبيهات الاختبارات والنتائج',
+      control: toggleSwitch(!!p.notifications_enabled, async (enabled) => {
+        try {
+          await api('/api/student/notifications/prefs', {
+            method: 'POST', write: true, body: { enabled },
+          });
+          alertMsg(enabled ? 'تم تفعيل الإشعارات.' : 'تم إيقاف الإشعارات.');
+        } catch (error) { alertMsg(error.message); }
+      }),
+    }));
+    wrap.appendChild(prefs);
+
+    wrap.appendChild(sectionTitle('المظهر'));
+    const appearance = el('<div class="sa-list"></div>');
+    appearance.appendChild(el(`<div class="sa-row" style="cursor:default">
+      <span class="sa-row-icon"><i class="bi bi-palette"></i></span>
+      <span class="sa-row-body">وضع العرض<small>الوضع الليلي أو النهاري</small></span>
+    </div>`));
+    const segWrap = el('<div style="padding:4px 15px 14px"></div>');
+    segWrap.appendChild(themeSegment());
+    appearance.appendChild(segWrap);
+    wrap.appendChild(appearance);
+
+    wrap.appendChild(sectionTitle('الحساب والمعلومات'));
+    const info = el('<div class="sa-list"></div>');
+    info.appendChild(settingsRow({
+      icon: 'bi-person-badge', title: 'حسابي',
+      subtitle: p.username ? '@' + p.username : 'حساب تيليجرام',
+      onClick: () => openAccount(p),
+    }));
+    info.appendChild(settingsRow({
+      icon: 'bi-shield-lock', title: 'سياسة الخصوصية',
+      onClick: openPrivacy,
+    }));
+    info.appendChild(settingsRow({
+      icon: 'bi-info-circle', title: 'حول التطبيق',
+      subtitle: 'إصدار 1.0.0',
+      onClick: openAbout,
+    }));
+    wrap.appendChild(info);
+
+    setHeader('الإعدادات', 'التفضيلات والحساب', false);
     render(wrap);
+  }
+
+  function openAccount(p) {
+    const rows = [
+      ['الاسم', p.name || '—'],
+      ['اسم المستخدم', p.username ? '@' + p.username : '—'],
+      ['معرّف تيليجرام', p.telegram_user_id ?? '—'],
+      ['تاريخ الانضمام', p.created_at || '—'],
+      ['آخر ظهور', p.last_seen_at || '—'],
+      ['الإشعارات', p.notifications_enabled ? 'مفعّلة' : 'موقوفة'],
+    ].map(([k, v]) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--sa-border)">
+        <span class="sa-note" style="margin:0">${esc(k)}</span>
+        <span style="font-weight:700;font-size:0.85rem">${esc(v)}</span></div>`).join('');
+    openModal('حسابي', rows, [{ label: 'إغلاق', secondary: true }]);
+  }
+
+  function openPrivacy() {
+    openModal('سياسة الخصوصية', `<p class="sa-note">
+      نحترم خصوصيتك في هذا التطبيق المصغّر:
+    </p>
+    <ul class="sa-note" style="padding-inline-start:18px;margin:10px 0 0">
+      <li>نجمع فقط معرّف تيليجرام وبيانات ملفك العام (الاسم وصورة العرض) للتعريف بك.</li>
+      <li>تُستخدم إجاباتك ونتائجك لعرض تقدّمك داخل الاختبارات فقط.</li>
+      <li>لا نشارك بياناتك مع أي طرف ثالث، ولا نرسل رسائل نيابة عنك.</li>
+      <li>يمكنك إيقاف الإشعارات في أي وقت من صفحة الإعدادات.</li>
+      <li>لطلب حذف بياناتك تواصل مع مشرف القناة.</li>
+    </ul>`, [{ label: 'فهمت', secondary: true }]);
+  }
+
+  function openAbout() {
+    openModal('حول التطبيق', `<p class="sa-note">
+      تطبيق الاختبارات التفاعلي داخل تيليجرام. خُض الاختبارات، تابع نتائجك،
+      واستعرض الإجابات بعد التسليم.
+    </p>
+    <div class="sa-note" style="margin-top:10px">
+      الإصدار 1.0.0 · بوابة الطالب
+    </div>`, [{ label: 'إغلاق', secondary: true }]);
   }
 
   // --- modal ---------------------------------------------------------------

@@ -777,6 +777,12 @@ def test_admin_pages_render(exam_client) -> None:
     app_page = exam_client.get("/app")
     assert app_page.status_code == 200
     assert "telegram-web-app.js" in app_page.text
+    # The fourth tab is Settings (account, notifications, privacy, theme).
+    assert 'data-tab="settings"' in app_page.text
+    assert "الإعدادات" in app_page.text
+    assert 'data-tab="profile"' not in app_page.text
+    # The theme is chosen before first paint to avoid a flash of the wrong mode.
+    assert "sa-theme" in app_page.text
 
 
 def test_exam_editor_page_lists_bank_questions(exam_client) -> None:
