@@ -814,7 +814,8 @@ class ExamAttemptService:
         return {
             "attempt": attempt,
             "exam": {"id": exam.get("id"), "title": exam.get("title", ""),
-                     "show_solutions": show_solutions},
+                     "show_solutions": show_solutions,
+                     "feedback_display": exam.get("feedback_display", "picked")},
             "questions": items,
         }
 

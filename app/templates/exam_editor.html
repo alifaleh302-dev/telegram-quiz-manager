@@ -104,6 +104,15 @@
           </select>
           <div class="form-text">في نمط التمرين تظهر النتيجة والتغذية الراجعة والشرح فور اختيار الإجابة، ولا يُحتسب وقت.</div>
         </div>
+        <div class="col-12" id="feedbackDisplayWrap" hidden>
+          <label class="form-label">طريقة عرض التغذية الراجعة <span class="hint">(نمط التمرين)</span></label>
+          {% set fb_display = exam.feedback_display if exam else 'picked' %}
+          <select class="form-select" name="feedback_display" id="feedbackDisplay">
+            <option value="picked" {{ 'selected' if fb_display == 'picked' }}>فقط الخيار الذي نقر عليه + الإجابة الصحيحة</option>
+            <option value="all" {{ 'selected' if fb_display == 'all' }}>تغذية راجعة لكل الخيارات</option>
+          </select>
+          <div class="form-text">«فقط الخيار الذي نقر عليه» يركز على ما اختاره الطالب؛ «كل الخيارات» يشرح كل خيار دفعة واحدة.</div>
+        </div>
         <div class="col-12" id="scheduleWindow" hidden>
           <label class="form-label">بداية الإتاحة</label>
           <div class="d-flex gap-2">

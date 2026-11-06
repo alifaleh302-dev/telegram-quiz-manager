@@ -54,6 +54,9 @@ class ExamIn(BaseModel):
     cover_image: str = ""
     access_mode: str = "always"
     mode: str = "timed"
+    # ``picked`` (default) shows feedback only under the tapped option plus the
+    # correct one; ``all`` shows every option's feedback. Practice mode only.
+    feedback_display: str = "picked"
     # Either pre-combined instants or the separate date/time fields.
     starts_at: str = ""
     ends_at: str = ""

@@ -364,6 +364,7 @@ def _attempt_payload(attempt: dict[str, Any], services: Any, student_id: str) ->
             "id": exam.get("id"),
             "title": exam.get("title", ""),
             "mode": exam.get("mode", "timed"),
+            "feedback_display": exam.get("feedback_display", "picked"),
             "duration_minutes": exam.get("duration_minutes", 0),
             "shuffle_questions": exam.get("shuffle_questions", False),
             "shuffle_options": exam.get("shuffle_options", False),

@@ -341,6 +341,9 @@ const SA = (() => {
   function openSession(data) {
     const questions = data.questions;
     const isPractice = data.exam.mode === 'practice';
+    // Practice feedback can be shown under every option or only under the one
+    // the student picked (plus the correct one). Defaults to the focused view.
+    const feedbackDisplay = (data.exam && data.exam.feedback_display) || 'picked';
     const answers = {};
     // Practice mode reveals each answer as it is picked; the per-question
     // feedback is cached here (from the answer call, or from the payload for a
@@ -373,7 +376,7 @@ const SA = (() => {
     </div>`);
     const body = el('<div class="sa-card"></div>');
     const hint = el(`<p class="sa-nav-hint"><i class="bi bi-hand-index-thumb"></i>
-      للتنقل بين الأسئلة اسحب يميناً أو يساراً، أو اضغط وسط حافة الشاشة ثم السهم.</p>`);
+      للتنقل بين الأسئلة اسحب يميناً أو يساراً، أو اضغط على أي مساحة فارغة ثم السهم.</p>`);
     const submitBar = el(`<div class="sa-submit-bar">
       <button class="sa-btn sa-submit" id="saSubmit"><i class="bi bi-send-check"></i> تسليم الاختبار</button>
     </div>`);
@@ -424,11 +427,13 @@ const SA = (() => {
         }
         body.appendChild(optionNode);
         // Feedback explains the option the student picked, plus the right answer
-        // when they got it wrong — the rest stay plain to keep the study screen
-        // focused on what the pick revealed.
+        // when they got it wrong — unless the exam asks for every option's
+        // feedback, in which case all of them are shown at once.
         const showFb =
           revealed &&
-          (optIndex === picked || optIndex === revealed.correct_option_id) &&
+          (feedbackDisplay === 'all' ||
+            optIndex === picked ||
+            optIndex === revealed.correct_option_id) &&
           revealed.options_feedback &&
           revealed.options_feedback[optIndex];
         if (showFb) {
@@ -525,22 +530,47 @@ const SA = (() => {
       body.style.animation = `${delta > 0 ? 'saSlideNext' : 'saSlidePrev'} .22s ease`;
     }
 
-    // Edge arrows stay hidden until the student taps the side of the screen:
-    // the first tap reveals the arrow, a tap while revealed navigates.
+    // Navigation arrows: tapping anywhere empty on the screen reveals them, and
+    // tapping a visible chevron moves straight away.
     function bindSideNav() {
       let timer = null;
-      [['saZonePrev', 'revealed-prev', -1], ['saZoneNext', 'revealed-next', 1]].forEach(
-        ([zoneId, cls, delta]) => {
-          document.getElementById(zoneId).addEventListener('click', () => {
-            const revealed = sideNavEl.classList.contains(cls);
-            clearTimeout(timer);
-            sideNavEl.classList.remove('revealed-prev', 'revealed-next');
-            sideNavEl.classList.add(cls);
-            timer = setTimeout(() => sideNavEl.classList.remove(cls), 3000);
-            if (revealed) move(delta);
-          });
-        },
-      );
+      const reveal = () => {
+        clearTimeout(timer);
+        sideNavEl.classList.add('revealed-prev', 'revealed-next');
+        timer = setTimeout(
+          () => sideNavEl.classList.remove('revealed-prev', 'revealed-next'), 3000,
+        );
+      };
+      const isRevealed = () =>
+        sideNavEl.classList.contains('revealed-prev') ||
+        sideNavEl.classList.contains('revealed-next');
+
+      // The visible chevrons must navigate on their own tap. Previously only the
+      // invisible edge zones were wired, so tapping the arrow did nothing.
+      document.getElementById('saArrowPrev').addEventListener('click', (event) => {
+        event.stopPropagation();
+        move(-1);
+      });
+      document.getElementById('saArrowNext').addEventListener('click', (event) => {
+        event.stopPropagation();
+        move(1);
+      });
+
+      // Edge zones: a first tap reveals the arrows, a tap while revealed moves.
+      [['saZonePrev', -1], ['saZoneNext', 1]].forEach(([zoneId, delta]) => {
+        document.getElementById(zoneId).addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (isRevealed()) move(delta);
+          else reveal();
+        });
+      });
+
+      // A tap on empty space (not an option or a control) reveals the arrows, so
+      // they are reachable without aiming for the exact screen edge.
+      wrap.addEventListener('click', (event) => {
+        if (event.target.closest('button, a, input, select, textarea, .sa-option')) return;
+        reveal();
+      });
     }
 
     // --- countdown: paused while the student is away ---------------------
@@ -761,12 +791,15 @@ const SA = (() => {
         <div class="sa-note">${esc(data.exam.title)}</div></div>`));
       data.questions.forEach((q, i) => {
         const card = el(`<div class="sa-card"><div class="sa-question-text">${i + 1}. ${esc(q.question)}</div></div>`);
+        const showAllFb = (data.exam && data.exam.feedback_display) === 'all';
         q.options.forEach((option, optIndex) => {
           let cls = '';
           if (q.correct_option_id !== undefined && optIndex === q.correct_option_id) cls = 'correct';
           else if (q.selected_option === optIndex) cls = 'wrong';
           card.appendChild(el(`<div class="sa-option ${cls}"><span class="key">${String.fromCharCode(65 + optIndex)}</span><span>${esc(option)}</span></div>`));
-          if (q.options_feedback && q.options_feedback[optIndex]) {
+          const showFb = q.options_feedback && q.options_feedback[optIndex]
+            && (showAllFb || optIndex === q.selected_option || optIndex === q.correct_option_id);
+          if (showFb) {
             card.appendChild(el(`<p class="sa-option-feedback ${optIndex === q.correct_option_id ? 'ok' : 'no'}">
               <i class="bi bi-${optIndex === q.correct_option_id ? 'check-circle-fill' : 'x-circle-fill'}"></i>
               ${esc(q.options_feedback[optIndex])}</p>`));

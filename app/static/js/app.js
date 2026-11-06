@@ -1607,6 +1607,14 @@ const TQM = (() => {
     accessMode?.addEventListener('change', syncWindow);
     syncWindow();
 
+    // The feedback-display choice only applies to practice mode, so hide it
+    // while the exam is a timed assessment.
+    const examMode = document.getElementById('examMode');
+    const feedbackWrap = document.getElementById('feedbackDisplayWrap');
+    const syncFeedback = () => { if (feedbackWrap) feedbackWrap.hidden = examMode?.value !== 'practice'; };
+    examMode?.addEventListener('change', syncFeedback);
+    syncFeedback();
+
     // Question picker: live search/category filter and selection counter.
     const search = document.getElementById('qPickerSearch');
     const category = document.getElementById('qPickerCategory');
@@ -1646,6 +1654,7 @@ const TQM = (() => {
         cover_image: data.get('cover_image') || '',
         access_mode: data.get('access_mode') || 'always',
         mode: data.get('mode') || 'timed',
+        feedback_display: data.get('feedback_display') || 'picked',
         start_date: data.get('start_date') || '',
         start_time: data.get('start_time') || '',
         end_date: data.get('end_date') || '',

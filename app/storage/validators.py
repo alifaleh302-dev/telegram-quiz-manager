@@ -23,6 +23,10 @@ EXAM_ACCESS_MODES = ("always", "scheduled")
 # picks an option (study/self-check); ``timed`` hides everything until the
 # attempt is submitted (a real assessment).
 EXAM_MODES = ("practice", "timed")
+# In practice mode, how much per-option feedback the student sees once they
+# answer: ``picked`` shows it only under the option they tapped (plus the correct
+# one), ``all`` shows every option's feedback at once. Irrelevant to timed exams.
+EXAM_FEEDBACK_MODES = ("picked", "all")
 ATTEMPT_STATUSES = ("in_progress", "submitted", "expired", "abandoned")
 NOTIFICATION_TYPES = (
     "exam_published",
@@ -367,6 +371,10 @@ def validate_exam_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if mode not in EXAM_MODES:
         raise ValidationError("نمط الاختبار يجب أن يكون practice أو timed.")
 
+    feedback_display = str(payload.get("feedback_display") or "picked").strip().lower()
+    if feedback_display not in EXAM_FEEDBACK_MODES:
+        raise ValidationError("طريقة عرض التغذية الراجعة يجب أن تكون picked أو all.")
+
     timezone = _clean_text(
         payload.get("timezone"), "المنطقة الزمنية", max_length=64, required=False
     )
@@ -442,6 +450,7 @@ def validate_exam_payload(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "access_mode": access_mode,
         "mode": mode,
+        "feedback_display": feedback_display,
         "starts_at": starts_at,
         "ends_at": ends_at,
         "timezone": timezone or "Asia/Riyadh",

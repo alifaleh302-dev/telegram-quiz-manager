@@ -1517,7 +1517,9 @@ PRACTICE_FEEDBACK = [
 ]
 
 
-def _make_practice_exam(client: TestClient, csrf: str, *, mode: str = "practice") -> str:
+def _make_practice_exam(
+    client: TestClient, csrf: str, *, mode: str = "practice", feedback_display: str | None = None
+) -> str:
     created = client.post(
         "/api/questions",
         json={
@@ -1542,6 +1544,7 @@ def _make_practice_exam(client: TestClient, csrf: str, *, mode: str = "practice"
             "duration_minutes": 30,
             "max_attempts": 0,
             "question_ids": [qid],
+            **({"feedback_display": feedback_display} if feedback_display else {}),
         },
         headers={"X-CSRF-Token": csrf},
     )
@@ -1596,6 +1599,80 @@ def test_practice_answer_returns_immediate_feedback(exam_client) -> None:
         headers=headers,
     )
     assert right.json()["is_correct"] is True
+
+
+def test_feedback_display_defaults_to_picked(exam_client) -> None:
+    """Without an explicit choice, an exam defaults to the focused view."""
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(exam_client, csrf, mode="practice")
+    exam = exam_client.get(f"/api/admin/exams/{exam_id}").json()["exam"]
+    assert exam["feedback_display"] == "picked"
+
+    headers = _student_headers()
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.json()["exam"]["feedback_display"] == "picked"
+
+
+def test_feedback_display_all_round_trips(exam_client) -> None:
+    """The 'all' choice is stored and surfaced to the student session."""
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(
+        exam_client, csrf, mode="practice", feedback_display="all"
+    )
+    exam = exam_client.get(f"/api/admin/exams/{exam_id}").json()["exam"]
+    assert exam["feedback_display"] == "all"
+
+    headers = _student_headers()
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.json()["exam"]["feedback_display"] == "all"
+
+
+def test_feedback_display_rejects_unknown_value(exam_client) -> None:
+    csrf = _login(exam_client)
+    response = exam_client.post(
+        "/api/admin/exams",
+        json={"title": "س", "mode": "practice", "feedback_display": "sometimes"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 400
+
+
+def test_feedback_display_survives_partial_update(exam_client) -> None:
+    """A partial PUT that omits the field keeps the stored choice."""
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(
+        exam_client, csrf, mode="practice", feedback_display="all"
+    )
+    updated = exam_client.put(
+        f"/api/admin/exams/{exam_id}",
+        json={"title": "عنوان جديد"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert updated.status_code == 200, updated.text
+    exam = exam_client.get(f"/api/admin/exams/{exam_id}").json()["exam"]
+    assert exam["title"] == "عنوان جديد"
+    assert exam["feedback_display"] == "all"
+
+
+def test_review_exposes_feedback_display(exam_client) -> None:
+    csrf = _login(exam_client)
+    exam_id = _make_practice_exam(
+        exam_client, csrf, mode="timed", feedback_display="all"
+    )
+    headers = _student_headers()
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    attempt_id = started.json()["attempt"]["id"]
+    qid = started.json()["questions"][0]["question_id"]
+    exam_client.post(
+        f"/api/student/attempts/{attempt_id}/answers",
+        json={"question_id": qid, "selected_option": 0},
+        headers=headers,
+    )
+    exam_client.post(f"/api/student/attempts/{attempt_id}/submit", headers=headers)
+    review = exam_client.get(
+        f"/api/student/attempts/{attempt_id}/review", headers=headers
+    ).json()
+    assert review["exam"]["feedback_display"] == "all"
 
 
 def test_timed_answer_never_leaks_feedback(exam_client) -> None:
