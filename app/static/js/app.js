@@ -151,6 +151,69 @@ const TQM = (() => {
     }
   }
 
+  // --- sidebar drawer / collapse ------------------------------------------
+  // Below lg the nav is an off-canvas drawer (open with the topbar toggle).
+  // At lg+ the same toggle collapses the sidebar to an icon rail. The desktop
+  // state is remembered in localStorage.
+  function initSidebar() {
+    const toggle = document.getElementById('sidebarToggle');
+    const sidebar = document.getElementById('appSidebar');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    const closeBtn = document.getElementById('sidebarClose');
+    if (!toggle || !sidebar) return;
+
+    const LG = 992;
+    const isDesktop = () => window.innerWidth >= LG;
+    const isDrawerOpen = () => document.body.classList.contains('sidebar-open');
+    const isCollapsed = () => document.body.classList.contains('sidebar-collapsed');
+
+    // Icon-only items need a tooltip to stay usable when collapsed.
+    sidebar.querySelectorAll('a.nav-item').forEach((link) => {
+      const label = link.querySelector('span');
+      if (label && !link.title) link.title = label.textContent.trim();
+    });
+
+    const syncToggle = () => {
+      const expanded = isDesktop() ? !isCollapsed() : isDrawerOpen();
+      toggle.setAttribute('aria-expanded', String(expanded));
+    };
+    const setDrawer = (open) => {
+      document.body.classList.toggle('sidebar-open', open);
+      if (backdrop) backdrop.hidden = !open;
+      syncToggle();
+    };
+    const setCollapsed = (collapsed) => {
+      document.body.classList.toggle('sidebar-collapsed', collapsed);
+      try { localStorage.setItem('tqm.sidebarCollapsed', collapsed ? '1' : '0'); } catch (e) {}
+      syncToggle();
+    };
+
+    // Restore the remembered desktop preference before the first paint settles.
+    try {
+      if (localStorage.getItem('tqm.sidebarCollapsed') === '1') setCollapsed(true);
+    } catch (e) {}
+    syncToggle();
+
+    toggle.addEventListener('click', () => {
+      if (isDesktop()) setCollapsed(!isCollapsed());
+      else setDrawer(!isDrawerOpen());
+    });
+    closeBtn?.addEventListener('click', () => setDrawer(false));
+    backdrop?.addEventListener('click', () => setDrawer(false));
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && isDrawerOpen()) setDrawer(false);
+    });
+    // Navigating away should not leave the drawer covering the new page.
+    sidebar.querySelectorAll('a.nav-item').forEach((link) => {
+      link.addEventListener('click', () => setDrawer(false));
+    });
+    // Crossing the breakpoint drops the drawer state so the layout is sane.
+    window.addEventListener('resize', () => {
+      if (isDesktop() && isDrawerOpen()) setDrawer(false);
+      syncToggle();
+    });
+  }
+
   function initQuestionTable() {
     const checkAll = document.getElementById('checkAll');
     const bulkBar = document.getElementById('bulkBar');
@@ -1580,7 +1643,7 @@ const TQM = (() => {
 
   return {
     api, toast, quickAction, publishNow, previewQuestion, duplicateQuestion, deleteQuestion,
-    bulk, initQuestionTable, initImportForm, initEditor,
+    bulk, initQuestionTable, initImportForm, initEditor, initSidebar,
     initChannelForm, showChannelForm, hideChannelForm, testChannel, toggleChannel,
     setDefaultChannel, deleteChannel,
     initScheduleForm, showScheduleForm, hideScheduleForm, scheduleAction,

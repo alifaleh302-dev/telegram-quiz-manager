@@ -12,66 +12,70 @@
 </head>
 <body>
 <div class="app-shell">
-  <aside class="sidebar">
+  <aside class="sidebar" id="appSidebar">
     <div class="sidebar-brand">
       <i class="bi bi-patch-question-fill"></i>
       <div>
         <span class="brand-title">Telegram Quiz</span>
         <span class="brand-sub">Manager</span>
       </div>
+      <button class="btn btn-icon sidebar-close d-lg-none" type="button"
+              id="sidebarClose" aria-label="إغلاق القائمة">
+        <i class="bi bi-x-lg"></i>
+      </button>
     </div>
 
     <nav class="sidebar-nav">
       <a class="nav-item {{ 'active' if active_page == 'dashboard' }}" href="/">
-        <i class="bi bi-speedometer2"></i> لوحة التحكم
+        <i class="bi bi-speedometer2"></i> <span>لوحة التحكم</span>
       </a>
       {% if 'questions' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'questions' }}" href="/questions">
-        <i class="bi bi-collection"></i> بنك الأسئلة
+        <i class="bi bi-collection"></i> <span>بنك الأسئلة</span>
       </a>
       {% endif %}
       {% if 'channels' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'channels' }}" href="/channels">
-        <i class="bi bi-broadcast"></i> القنوات
+        <i class="bi bi-broadcast"></i> <span>القنوات</span>
       </a>
       {% endif %}
       {% if 'schedules' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'schedules' }}" href="/schedules">
-        <i class="bi bi-calendar2-week"></i> الجدولة
+        <i class="bi bi-calendar2-week"></i> <span>الجدولة</span>
       </a>
       {% endif %}
       {% if 'exams' in permissions %}
       <div class="nav-section">منصة الاختبارات</div>
       <a class="nav-item {{ 'active' if active_page == 'exams' }}" href="/exams">
-        <i class="bi bi-journal-check"></i> الاختبارات
+        <i class="bi bi-journal-check"></i> <span>الاختبارات</span>
       </a>
       <a class="nav-item {{ 'active' if active_page == 'students' }}" href="/students">
-        <i class="bi bi-mortarboard"></i> الطلاب
+        <i class="bi bi-mortarboard"></i> <span>الطلاب</span>
       </a>
       <a class="nav-item {{ 'active' if active_page == 'attempts' }}" href="/attempts">
-        <i class="bi bi-list-check"></i> المحاولات
+        <i class="bi bi-list-check"></i> <span>المحاولات</span>
       </a>
       <a class="nav-item {{ 'active' if active_page == 'exam-analytics' }}" href="/exam-analytics">
-        <i class="bi bi-graph-up"></i> تحليل الاختبارات
+        <i class="bi bi-graph-up"></i> <span>تحليل الاختبارات</span>
       </a>
       {% endif %}
       {% if is_admin %}
       <a class="nav-item {{ 'active' if active_page == 'history' }}" href="/history">
-        <i class="bi bi-journal-text"></i> سجل النشر
+        <i class="bi bi-journal-text"></i> <span>سجل النشر</span>
       </a>
       {% endif %}
       {% if 'analytics' in permissions %}
       <a class="nav-item {{ 'active' if active_page == 'analytics' }}" href="/analytics">
-        <i class="bi bi-bar-chart-line"></i> الإحصائيات
+        <i class="bi bi-bar-chart-line"></i> <span>الإحصائيات</span>
       </a>
       {% endif %}
       {% if is_admin %}
       <a class="nav-item {{ 'active' if active_page == 'users' }}" href="/users">
-        <i class="bi bi-people"></i> المستخدمون
+        <i class="bi bi-people"></i> <span>المستخدمون</span>
       </a>
       {% endif %}
       <a class="nav-item {{ 'active' if active_page == 'settings' }}" href="/settings">
-        <i class="bi bi-sliders"></i> الإعدادات
+        <i class="bi bi-sliders"></i> <span>الإعدادات</span>
       </a>
     </nav>
 
@@ -86,7 +90,7 @@
       <form method="post" action="/logout">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button class="btn btn-sm btn-outline-secondary w-100" type="submit">
-          <i class="bi bi-box-arrow-right"></i> خروج
+          <i class="bi bi-box-arrow-right"></i> <span>خروج</span>
         </button>
       </form>
     </div>
@@ -94,9 +98,16 @@
 
   <main class="main-area">
     <header class="topbar">
-      <div>
-        <h1 class="page-title">{% block page_title %}{{ app_name }}{% endblock %}</h1>
-        <p class="page-subtitle">{% block page_subtitle %}{% endblock %}</p>
+      <div class="topbar-heading">
+        <button class="btn btn-icon sidebar-toggle" type="button"
+                id="sidebarToggle" aria-controls="appSidebar" aria-expanded="true"
+                aria-label="إظهار/إخفاء القائمة">
+          <i class="bi bi-list"></i>
+        </button>
+        <div>
+          <h1 class="page-title">{% block page_title %}{{ app_name }}{% endblock %}</h1>
+          <p class="page-subtitle">{% block page_subtitle %}{% endblock %}</p>
+        </div>
       </div>
       <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
     </header>
@@ -109,12 +120,15 @@
   </main>
 </div>
 
+<div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+
 <div id="toast-area" class="toast-area"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/htmx.org@1.9.12/dist/htmx.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="/static/js/app.js"></script>
+<script>TQM.initSidebar();</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
