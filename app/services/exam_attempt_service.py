@@ -43,6 +43,10 @@ def _parse_instant(value: str | None) -> datetime | None:
         return None
 
 
+def _iso(moment: datetime) -> str:
+    return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -183,11 +187,11 @@ class ExamAttemptService:
         limit = int(exam.get("max_attempts", 1) or 0)
         now = _now()
         expires_at = ""
+        remaining_seconds = None
         duration = int(exam.get("duration_minutes", 0) or 0)
         if duration > 0:
-            expires_at = (now + timedelta(minutes=duration)).replace(
-                microsecond=0
-            ).isoformat().replace("+00:00", "Z")
+            remaining_seconds = duration * 60
+            expires_at = _iso(now + timedelta(seconds=remaining_seconds))
 
         def _mutate(document: dict[str, Any]) -> dict[str, Any]:
             rows = document["attempts"]
@@ -219,9 +223,12 @@ class ExamAttemptService:
                 "attempt_number": number,
                 "status": STATUS_IN_PROGRESS,
                 "question_version": int(exam.get("question_version", 0)),
-                "started_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "started_at": _iso(now),
                 "submitted_at": None,
                 "expires_at": expires_at,
+                "remaining_seconds": remaining_seconds,
+                "paused_at": None,
+                "paused_seconds": 0,
                 "score": 0,
                 "total_score": 0,
                 "percentage": 0.0,
@@ -247,14 +254,107 @@ class ExamAttemptService:
         )
         return attempt
 
+    # --- timer: pause / resume ---------------------------------------------
+    def _remaining_seconds(self, attempt: dict[str, Any], *, at: datetime) -> int | None:
+        """Seconds left, or ``None`` for an exam with no time limit.
+
+        A paused attempt keeps the balance it had at the moment it was paused:
+        the clock does not advance while the student is away from the session.
+        An attempt stored before this feature existed has no banked balance, so
+        its deadline is used as the source of truth.
+        """
+        stored = attempt.get("remaining_seconds")
+        expires = _parse_instant(attempt.get("expires_at"))
+        if attempt.get("paused_at"):
+            if stored is None and expires is None:
+                return None
+            return max(0, int(stored or 0))
+        if expires is not None:
+            return max(0, int((expires - at).total_seconds()))
+        if stored is None:
+            return None
+        return max(0, int(stored))
+
+    def time_left(self, attempt: dict[str, Any]) -> int | None:
+        """Public wrapper: the effective countdown for an attempt right now."""
+        return self._remaining_seconds(attempt, at=_now())
+
+    def _expire_if_due(self, attempt: dict[str, Any]) -> dict[str, Any]:
+        """Auto-submit an attempt whose clock ran out while it was running.
+
+        A paused attempt is never expired here: its countdown is frozen, so it
+        can only expire once it is resumed and the balance runs out.
+        """
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            return attempt
+        if attempt.get("paused_at"):
+            return attempt
+        expires = _parse_instant(attempt.get("expires_at"))
+        if expires and _now() > expires:
+            return self._finalize(attempt["id"], status=STATUS_EXPIRED)
+        return attempt
+
+    def pause(self, attempt_id: str, student_id: str, *, actor: str = "system") -> dict[str, Any]:
+        """Freeze the countdown, banking the time the student has left."""
+        attempt = self.get_owned(attempt_id, student_id)
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            raise AttemptError("المحاولة مُسلَّمة بالفعل.")
+
+        # If the clock already ran out, this pause must not rescue it.
+        attempt = self._expire_if_due(attempt)
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            raise AttemptError("انتهى وقت الاختبار وتم التسليم تلقائياً.")
+        now = _now()
+        balance = self._remaining_seconds(attempt, at=now)
+        if attempt.get("paused_at") or balance is None:
+            return attempt
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for item in document["attempts"]:
+                if item["id"] == attempt_id and item.get("status") == STATUS_IN_PROGRESS:
+                    item["remaining_seconds"] = balance
+                    item["paused_at"] = _iso(now)
+                    return item
+            return attempt
+
+        return self._storage.attempts.update(_mutate)
+
+    def resume(self, attempt_id: str, student_id: str, *, actor: str = "system") -> dict[str, Any]:
+        """Restart the countdown from the balance banked at pause time."""
+        attempt = self.get_owned(attempt_id, student_id)
+        if attempt.get("status") != STATUS_IN_PROGRESS:
+            raise AttemptError("المحاولة مُسلَّمة بالفعل.")
+        if not attempt.get("paused_at"):
+            return attempt
+
+        balance = max(0, int(attempt.get("remaining_seconds") or 0))
+        now = _now()
+        # Resuming with nothing left is simply the end of the exam.
+        if balance <= 0:
+            return self._finalize(attempt_id, status=STATUS_EXPIRED)
+
+        paused_at = _parse_instant(attempt.get("paused_at"))
+        away = int((now - paused_at).total_seconds()) if paused_at else 0
+        paused_seconds = int(attempt.get("paused_seconds") or 0) + max(0, away)
+        expires_at = _iso(now + timedelta(seconds=balance))
+
+        def _mutate(document: dict[str, Any]) -> dict[str, Any]:
+            for item in document["attempts"]:
+                if item["id"] == attempt_id and item.get("status") == STATUS_IN_PROGRESS:
+                    item["remaining_seconds"] = balance
+                    item["expires_at"] = expires_at
+                    item["paused_at"] = None
+                    item["paused_seconds"] = paused_seconds
+                    return item
+            return attempt
+
+        return self._storage.attempts.update(_mutate)
+
     # --- answering ---------------------------------------------------------
     def _assert_open(self, attempt: dict[str, Any]) -> None:
         if attempt.get("status") != STATUS_IN_PROGRESS:
             raise AttemptError("المحاولة مُسلَّمة بالفعل.")
-        expires = _parse_instant(attempt.get("expires_at"))
-        if expires and _now() > expires:
-            # Time is up: close it out before rejecting the write.
-            self._finalize(attempt["id"], status=STATUS_EXPIRED)
+        if self._expire_if_due(attempt).get("status") != STATUS_IN_PROGRESS:
             raise AttemptError("انتهى وقت الاختبار وتم التسليم تلقائياً.")
 
     def save_answer(
@@ -350,6 +450,13 @@ class ExamAttemptService:
         started = _parse_instant(attempt.get("started_at"))
         now = _now()
         duration = int((now - started).total_seconds()) if started else 0
+        # Time spent paused is not time spent on the exam; a student who leaves
+        # and returns must not see the away-time counted as their duration.
+        if attempt.get("paused_at"):
+            paused_at = _parse_instant(attempt.get("paused_at"))
+            if paused_at:
+                duration -= max(0, int((now - paused_at).total_seconds()))
+        duration -= int(attempt.get("paused_seconds") or 0)
         if duration < 0:
             duration = 0
 
@@ -399,10 +506,17 @@ class ExamAttemptService:
         return result
 
     def sweep_expired(self) -> int:
-        """Auto-submit every attempt whose server-side window has passed."""
+        """Auto-submit every attempt whose server-side window has passed.
+
+        Paused attempts are skipped: their countdown is frozen, so an elapsed
+        wall-clock deadline must not close a session the student has not
+        resumed (the balance is re-based on resume).
+        """
         closed = 0
         for attempt in self._all():
             if attempt.get("status") != STATUS_IN_PROGRESS:
+                continue
+            if attempt.get("paused_at"):
                 continue
             expires = _parse_instant(attempt.get("expires_at"))
             if expires and _now() > expires:

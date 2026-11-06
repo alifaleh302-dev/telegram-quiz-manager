@@ -5,6 +5,7 @@ admin/student APIs, driven through the real app with a fake Telegram transport.
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -245,7 +246,7 @@ def _student_headers() -> dict[str, str]:
     return {"X-Telegram-Init-Data": init_data}
 
 
-def _make_exam(client: TestClient, csrf: str, questions: int = 2) -> str:
+def _make_exam(client: TestClient, csrf: str, questions: int = 2, duration_minutes: int = 0) -> str:
     qids = []
     for index in range(questions):
         created = client.post(
@@ -266,6 +267,7 @@ def _make_exam(client: TestClient, csrf: str, questions: int = 2) -> str:
             "title": "اختبار API",
             "access_mode": "always",
             "max_attempts": 2,
+            "duration_minutes": duration_minutes,
             "question_ids": qids,
         },
         headers={"X-CSRF-Token": csrf},
@@ -326,6 +328,46 @@ def test_full_student_flow(exam_client) -> None:
     review = exam_client.get(f"/api/student/attempts/{attempt_id}/review", headers=headers)
     assert review.status_code == 200
     assert len(review.json()["questions"]) == 2
+
+
+def test_timed_attempt_pause_resume_endpoints(exam_client) -> None:
+    """The timer balance is exposed, frozen on pause and restored on resume."""
+    csrf = _login(exam_client)
+    exam_id = _make_exam(exam_client, csrf, questions=1, duration_minutes=30)
+    headers = _student_headers()
+
+    started = exam_client.post(f"/api/student/exams/{exam_id}/start", headers=headers)
+    assert started.status_code == 200, started.text
+    attempt = started.json()["attempt"]
+    attempt_id = attempt["id"]
+    assert 1790 <= attempt["remaining_seconds"] <= 1800
+    assert attempt["paused"] is False
+
+    paused = exam_client.post(
+        f"/api/student/attempts/{attempt_id}/pause", headers=headers
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["attempt"]["paused"] is True
+    assert 1790 <= paused.json()["attempt"]["remaining_seconds"] <= 1800
+
+    # Reopening the session reports the frozen balance and the paused flag, so
+    # the client knows to resume rather than restart the countdown.
+    reopened = exam_client.get(f"/api/student/attempts/{attempt_id}", headers=headers)
+    assert reopened.status_code == 200
+    assert reopened.json()["attempt"]["paused"] is True
+    assert 1790 <= reopened.json()["attempt"]["remaining_seconds"] <= 1800
+
+    resumed = exam_client.post(
+        f"/api/student/attempts/{attempt_id}/resume", headers=headers
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["attempt"]["paused"] is False
+    assert 1790 <= resumed.json()["attempt"]["remaining_seconds"] <= 1800
+
+    # A finished attempt cannot be paused.
+    exam_client.post(f"/api/student/attempts/{attempt_id}/submit", headers=headers)
+    late = exam_client.post(f"/api/student/attempts/{attempt_id}/pause", headers=headers)
+    assert late.status_code == 400
 
 
 def test_student_cannot_read_other_attempt(exam_client) -> None:
@@ -565,6 +607,114 @@ def test_expired_attempt_is_swept_and_submitted(svc) -> None:
     svc.storage.attempts.update(_expire)
     assert svc.attempts.sweep_expired() == 1
     assert svc.attempts.get(attempt["id"])["status"] == "expired"
+
+
+def test_pause_freezes_timer_and_resume_restores_balance(svc) -> None:
+    """Leaving the session banks the time left; returning restores exactly it."""
+    q = _ready(svc)
+    exam = svc.exams.create(
+        {"title": "إيقاف مؤقت", "access_mode": "always", "duration_minutes": 10}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(30))
+    attempt = svc.attempts.start(exam["id"], student["id"])
+    assert 599 <= svc.attempts.time_left(attempt) <= 600
+
+    # Drive the deadline directly instead of relying on wall-clock sleeps.
+    def _set_deadline(document):
+        for row in document["attempts"]:
+            if row["id"] == attempt["id"]:
+                deadline = datetime.now(UTC) + timedelta(seconds=500)
+                row["expires_at"] = deadline.replace(microsecond=0).isoformat().replace(
+                    "+00:00", "Z"
+                )
+
+    svc.storage.attempts.update(_set_deadline)
+    paused = svc.attempts.pause(attempt["id"], student["id"])
+    assert paused["paused_at"]
+    assert 495 <= paused["remaining_seconds"] <= 500
+
+    # While paused, the sweep must not close it even though wall time passes.
+    svc.storage.attempts.update(_set_deadline)  # a fresh future deadline, then push to the past
+    def _past(document):
+        for row in document["attempts"]:
+            if row["id"] == attempt["id"]:
+                row["expires_at"] = "2000-01-01T00:00:00Z"
+    svc.storage.attempts.update(_past)
+    assert svc.attempts.sweep_expired() == 0
+    assert svc.attempts.get(attempt["id"])["status"] == "in_progress"
+
+    resumed = svc.attempts.resume(attempt["id"], student["id"])
+    assert resumed["paused_at"] is None
+    assert resumed["status"] == "in_progress"
+    assert 495 <= resumed["remaining_seconds"] <= 500
+    # A resumed attempt can be swept again once its new deadline passes.
+    svc.storage.attempts.update(_past)
+    assert svc.attempts.sweep_expired() == 1
+    assert svc.attempts.get(attempt["id"])["status"] == "expired"
+
+
+def test_pause_does_not_rescue_an_expired_attempt(svc) -> None:
+    q = _ready(svc)
+    exam = svc.exams.create(
+        {"title": "انتهى", "access_mode": "always", "duration_minutes": 1}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(31))
+    attempt = svc.attempts.start(exam["id"], student["id"])
+
+    def _expire(document):
+        for row in document["attempts"]:
+            if row["id"] == attempt["id"]:
+                row["expires_at"] = "2000-01-01T00:00:00Z"
+
+    svc.storage.attempts.update(_expire)
+    with pytest.raises(ValidationError):
+        svc.attempts.pause(attempt["id"], student["id"])
+    assert svc.attempts.get(attempt["id"])["status"] == "expired"
+
+
+def test_save_answer_rejected_after_clock_runs_out(svc) -> None:
+    q = _ready(svc)
+    exam = svc.exams.create(
+        {"title": "مؤقّت", "access_mode": "always", "duration_minutes": 5}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(32))
+    attempt = svc.attempts.start(exam["id"], student["id"])
+
+    def _expire(document):
+        for row in document["attempts"]:
+            if row["id"] == attempt["id"]:
+                row["expires_at"] = "2000-01-01T00:00:00Z"
+
+    svc.storage.attempts.update(_expire)
+    with pytest.raises(ValidationError):
+        svc.attempts.save_answer(attempt["id"], student["id"], q["id"], 0)
+    assert svc.attempts.get(attempt["id"])["status"] == "expired"
+
+
+def test_paused_time_excluded_from_duration(svc) -> None:
+    q = _ready(svc)
+    exam = svc.exams.create(
+        {"title": "مدة", "access_mode": "always", "duration_minutes": 10}, [q["id"]]
+    )
+    svc.exams.publish(exam["id"])
+    student = svc.students.touch(_TG(33))
+    attempt = svc.attempts.start(exam["id"], student["id"])
+    svc.attempts.pause(attempt["id"], student["id"])
+    # Simulate a long absence by back-dating the pause instant.
+    def _backdate(document):
+        for row in document["attempts"]:
+            if row["id"] == attempt["id"]:
+                row["paused_at"] = (datetime.now(UTC) - timedelta(seconds=3600)).replace(
+                    microsecond=0
+                ).isoformat().replace("+00:00", "Z")
+    svc.storage.attempts.update(_backdate)
+    svc.attempts.resume(attempt["id"], student["id"])
+    done = svc.attempts.submit(attempt["id"], student["id"])
+    # An hour away must not be charged to the attempt's duration.
+    assert done["duration_seconds"] < 60
 
 
 def test_admin_reset_attempts_clears_history(svc) -> None:

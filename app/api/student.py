@@ -225,6 +225,8 @@ def _attempt_summary(attempt: dict[str, Any]) -> dict[str, Any]:
         "started_at": attempt.get("started_at"),
         "submitted_at": attempt.get("submitted_at"),
         "expires_at": attempt.get("expires_at"),
+        "remaining_seconds": attempt.get("remaining_seconds"),
+        "paused": bool(attempt.get("paused_at")),
         "score": attempt.get("score", 0),
         "total_score": attempt.get("total_score", 0),
         "percentage": attempt.get("percentage", 0),
@@ -292,8 +294,13 @@ def _attempt_payload(attempt: dict[str, Any], services: Any, student_id: str) ->
         a["question_id"]: a["selected_option"]
         for a in services.attempts.answers_for(attempt["id"])
     }
+    summary = _attempt_summary(attempt)
+    if attempt.get("status") == "in_progress":
+        # Report the *effective* countdown, not the balance frozen at start, so
+        # a reopened session resumes from the real time left.
+        summary["remaining_seconds"] = services.attempts.time_left(attempt)
     return {
-        "attempt": _attempt_summary(attempt),
+        "attempt": summary,
         "exam": {
             "id": exam.get("id"),
             "title": exam.get("title", ""),
@@ -328,6 +335,32 @@ async def student_save_answer(
     except AttemptError as exc:
         raise ValidationError(str(exc)) from exc
     return {"ok": True}
+
+
+@router.post("/attempts/{attempt_id}/pause")
+async def student_pause_attempt(
+    attempt_id: str, ctx: StudentContext = Depends(require_student_write)
+) -> dict[str, Any]:
+    """Freeze the countdown while the student is away from the session."""
+    services = ctx.services
+    try:
+        attempt = services.attempts.pause(attempt_id, ctx.id)
+    except AttemptError as exc:
+        raise ValidationError(str(exc)) from exc
+    return {"attempt": _attempt_summary(attempt)}
+
+
+@router.post("/attempts/{attempt_id}/resume")
+async def student_resume_attempt(
+    attempt_id: str, ctx: StudentContext = Depends(require_student_write)
+) -> dict[str, Any]:
+    """Restart the countdown from the balance banked at pause time."""
+    services = ctx.services
+    try:
+        attempt = services.attempts.resume(attempt_id, ctx.id)
+    except AttemptError as exc:
+        raise ValidationError(str(exc)) from exc
+    return {"attempt": _attempt_summary(attempt)}
 
 
 @router.post("/attempts/{attempt_id}/submit")

@@ -10,7 +10,7 @@ const SA = (() => {
   const tg = window.Telegram?.WebApp;
   let studentToken = '';
   let initData = '';
-  let state = { view: 'home', stack: [], exam: null, session: null, timer: null };
+  let state = { view: 'home', stack: [], exam: null, session: null, timer: null, sessionCleanup: null };
 
   // --- low-level -----------------------------------------------------------
   function headers(write = false) {
@@ -19,8 +19,9 @@ const SA = (() => {
     return h;
   }
 
-  async function api(path, { method = 'GET', body, write = false } = {}) {
+  async function api(path, { method = 'GET', body, write = false, keepalive = false } = {}) {
     const options = { method, headers: headers(write) };
+    if (keepalive) options.keepalive = true;
     if (body !== undefined) {
       options.headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(body);
@@ -65,7 +66,14 @@ const SA = (() => {
     document.getElementById('saBack').hidden = !showBack;
   }
   const view = () => document.getElementById('saView');
-  function render(node) { const v = view(); v.innerHTML = ''; v.appendChild(node); }
+  function render(node) {
+    // Any render replaces the current view, so tear down the previous session's
+    // timer/listeners first — otherwise a hidden interval would keep running.
+    if (state.sessionCleanup) state.sessionCleanup();
+    const v = view();
+    v.innerHTML = '';
+    v.appendChild(node);
+  }
   const fmtPct = (v) => `${Math.round(Number(v) || 0)}%`;
   function fmtDuration(seconds) {
     const s = Math.max(0, Math.floor(Number(seconds) || 0));
@@ -335,7 +343,7 @@ const SA = (() => {
     </div>`);
     const body = el('<div class="sa-card"></div>');
     const hint = el(`<p class="sa-nav-hint"><i class="bi bi-hand-index-thumb"></i>
-      للتنقل بين الأسئلة اضغط وسط حافة الشاشة يميناً أو يساراً ثم اضغط السهم.</p>`);
+      للتنقل بين الأسئلة اسحب يميناً أو يساراً، أو اضغط وسط حافة الشاشة ثم السهم.</p>`);
     const submitBar = el(`<div class="sa-submit-bar">
       <button class="sa-btn sa-submit" id="saSubmit"><i class="bi bi-send-check"></i> تسليم الاختبار</button>
     </div>`);
@@ -389,7 +397,43 @@ const SA = (() => {
       const next = index + delta;
       if (next < 0 || next >= questions.length) return;
       index = next;
+      animate(delta);
       paint();
+    }
+
+    // Swipe gestures are an *addition* to the edge arrows below, which keep
+    // working exactly as before. In this RTL layout the next question sits to
+    // the left, so a rightward drag (dx > 0) reveals it and a leftward drag
+    // goes back — the mirror of a LTR carousel.
+    function bindSwipe() {
+      const THRESHOLD = 45;
+      let startX = 0;
+      let startY = 0;
+      let tracking = false;
+      body.addEventListener('touchstart', (event) => {
+        if (event.touches.length !== 1) { tracking = false; return; }
+        tracking = true;
+        startX = event.touches[0].clientX;
+        startY = event.touches[0].clientY;
+      }, { passive: true });
+      body.addEventListener('touchend', (event) => {
+        if (!tracking) return;
+        tracking = false;
+        const touch = event.changedTouches[0];
+        if (!touch) return;
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        // Ignore short taps and vertical drags so scrolling is never hijacked.
+        if (Math.abs(dx) < THRESHOLD || Math.abs(dx) <= Math.abs(dy)) return;
+        move(dx > 0 ? 1 : -1);
+      }, { passive: true });
+    }
+
+    // A short slide so a swipe reads as a page change rather than a redraw.
+    function animate(delta) {
+      body.style.animation = 'none';
+      void body.offsetWidth;
+      body.style.animation = `${delta > 0 ? 'saSlideNext' : 'saSlidePrev'} .22s ease`;
     }
 
     // Edge arrows stay hidden until the student taps the side of the screen:
@@ -410,25 +454,124 @@ const SA = (() => {
       );
     }
 
-    bindSideNav();
-    document.getElementById('saSubmit').addEventListener('click', () => confirmSubmit(data.attempt.id, answers, questions));
-    paint();
+    // --- countdown: paused while the student is away ---------------------
+    const attemptId = data.attempt.id;
+    const hasTimer = data.attempt.remaining_seconds !== null
+      && data.attempt.remaining_seconds !== undefined;
+    let remaining = hasTimer ? Math.max(0, Math.floor(Number(data.attempt.remaining_seconds))) : null;
+    let paused = false;
+    let finished = false;
 
-    if (data.attempt.expires_at) {
-      const end = new Date(data.attempt.expires_at).getTime();
+    function paintTimer() {
+      if (!hasTimer) return;
+      timerEl.textContent = fmtDuration(remaining);
+      timerEl.classList.toggle('warning', remaining < 60);
+    }
+
+    function startTicker() {
+      if (!hasTimer || paused) return;
+      if (state.timer) clearInterval(state.timer);
+      paintTimer();
       state.timer = setInterval(() => {
-        const remaining = Math.floor((end - Date.now()) / 1000);
+        if (paused || finished) return;
+        remaining = Math.max(0, remaining - 1);
+        paintTimer();
         if (remaining <= 0) {
           clearInterval(state.timer);
-          timerEl.textContent = '00:00';
-          submitAttempt(data.attempt.id);
-          return;
+          state.timer = null;
+          submitAttempt(attemptId);
         }
-        timerEl.textContent = fmtDuration(remaining);
-        timerEl.classList.toggle('warning', remaining < 60);
       }, 1000);
-    } else {
+    }
+
+    function stopTicker() {
+      if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    }
+
+    // Freeze the clock on the server and locally the moment the student leaves
+    // the screen; the balance is re-based on resume, so no time is lost.
+    function pauseTimer() {
+      // Submitting tears the view down on purpose: do not pause a session that
+      // is on its way out, or the pause would race the submit.
+      if (!hasTimer || paused || finished || state.submitting) return;
+      paused = true;
+      stopTicker();
+      api(`/api/student/attempts/${attemptId}/pause`, { method: 'POST', write: true, keepalive: true })
+        .then((res) => {
+          const value = res?.attempt?.remaining_seconds;
+          if (value !== null && value !== undefined) remaining = Math.max(0, Math.floor(Number(value)));
+        })
+        .catch(() => { /* the server clock stays authoritative on resume */ });
+    }
+
+    function resumeTimer() {
+      if (!hasTimer || !paused || finished) return;
+      api(`/api/student/attempts/${attemptId}/resume`, { method: 'POST', write: true })
+        .then((res) => {
+          if (finished) return;
+          if (res?.attempt && res.attempt.status !== 'in_progress') {
+            finishAttempt();
+            return;
+          }
+          const value = res?.attempt?.remaining_seconds;
+          if (value !== null && value !== undefined) remaining = Math.max(0, Math.floor(Number(value)));
+          paused = false;
+          startTicker();
+        })
+        .catch(() => { paused = false; startTicker(); });
+    }
+
+    async function finishAttempt() {
+      finished = true;
+      stopTicker();
+      render(loading());
+      try {
+        const res = await api(`/api/student/attempts/${attemptId}/result`);
+        await refreshBadge();
+        showResult(res.result);
+      } catch (error) {
+        render(emptyState('bi-exclamation-triangle', 'تعذّر عرض النتيجة', error.message));
+      }
+    }
+
+    const onHide = () => pauseTimer();
+    const onShow = () => { if (!document.hidden) resumeTimer(); };
+    const onVisibility = () => { document.hidden ? onHide() : onShow(); };
+
+    // Leaving the session screen (another tab, back, submit) must stop this
+    // interval, or it would keep ticking against a view that no longer exists.
+    state.sessionCleanup = () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('blur', onHide);
+      window.removeEventListener('pageshow', onShow);
+      window.removeEventListener('focus', onShow);
+      if (!finished) pauseTimer();
+      stopTicker();
+      state.sessionCleanup = null;
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onHide);
+    window.addEventListener('blur', onHide);
+    window.addEventListener('pageshow', onShow);
+    window.addEventListener('focus', onShow);
+
+    bindSideNav();
+    bindSwipe();
+    document.getElementById('saSubmit').addEventListener('click', () => confirmSubmit(attemptId, answers, questions));
+    paint();
+
+    if (!hasTimer) {
       timerEl.textContent = '∞';
+    } else if (data.attempt.paused) {
+      // Reopened a session that was paused when the student last left: the
+      // server holds the balance, so resume it now that they are back.
+      paused = true;
+      paintTimer();
+      resumeTimer();
+    } else {
+      startTicker();
     }
   }
 
@@ -441,6 +584,11 @@ const SA = (() => {
   }
 
   async function submitAttempt(attemptId) {
+    state.submitting = true;
+    // Detach the session listeners without pausing: the pause is skipped while
+    // submitting, and a stale listener must not fire against a torn-down view.
+    if (state.sessionCleanup) state.sessionCleanup();
+    state.sessionCleanup = null;
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
     render(loading());
     try {
@@ -449,6 +597,8 @@ const SA = (() => {
       showResult(data.result);
     } catch (error) {
       render(emptyState('bi-exclamation-triangle', 'تعذّر التسليم', error.message));
+    } finally {
+      state.submitting = false;
     }
   }
 
