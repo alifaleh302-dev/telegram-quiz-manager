@@ -405,13 +405,14 @@ const SA = (() => {
       body.innerHTML = `<div class="sa-question-text">${esc(q.question)}</div>`;
       const revealed = isPractice ? feedback[q.question_id] : null;
       const frozen = revealed || pending.has(q.question_id);
+      const picked = revealed ? answers[q.question_id] : null;
       q.options.forEach((option, optIndex) => {
         let cls = '';
         if (revealed) {
           // After an answer in practice mode: the picked option is coloured by
           // correctness and the right one is always shown in green.
           if (optIndex === revealed.correct_option_id) cls = 'correct';
-          else if (optIndex === answers[q.question_id]) cls = 'wrong';
+          else if (optIndex === picked) cls = 'wrong';
         } else if (answers[q.question_id] === optIndex) {
           cls = 'selected';
         }
@@ -422,12 +423,19 @@ const SA = (() => {
           optionNode.addEventListener('click', () => chooseOption(q, optIndex));
         }
         body.appendChild(optionNode);
-        // Per-option feedback sits under the exact option it explains.
-        if (revealed && revealed.options_feedback && revealed.options_feedback[optIndex]) {
-          const fb = el(`<p class="sa-option-feedback ${optIndex === revealed.correct_option_id ? 'ok' : 'no'}">
-            <i class="bi bi-${optIndex === revealed.correct_option_id ? 'check-circle-fill' : 'x-circle-fill'}"></i>
-            ${esc(revealed.options_feedback[optIndex])}</p>`);
-          body.appendChild(fb);
+        // Feedback explains the option the student picked, plus the right answer
+        // when they got it wrong — the rest stay plain to keep the study screen
+        // focused on what the pick revealed.
+        const showFb =
+          revealed &&
+          (optIndex === picked || optIndex === revealed.correct_option_id) &&
+          revealed.options_feedback &&
+          revealed.options_feedback[optIndex];
+        if (showFb) {
+          const ok = optIndex === revealed.correct_option_id;
+          body.appendChild(el(`<p class="sa-option-feedback ${ok ? 'ok' : 'no'}">
+            <i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'}"></i>
+            ${esc(revealed.options_feedback[optIndex])}</p>`));
         }
       });
       if (revealed && revealed.explanation) {
